@@ -83,7 +83,13 @@ module tt_um_pettit_galton
     wire deflect_trigger;
 
     // ---------------------------------------------------------------
-    //  Use a single 23-bit LFSR for randomization.
+    //  Two coprime LFSRs whose outputs are XOR-mixed.  A single 16-bit
+    //  LFSR sampled at fixed per-ball intervals only has ~65k reachable
+    //  13-bit deflection sequences, so all-left / all-right runs are
+    //  effectively unreachable and the extreme bins never fill.
+    //  Combining a 16-bit (taps 16,14,13,11) and a 17-bit (taps 17,14)
+    //  maximal LFSR gives a period of (2^16-1)*(2^17-1) ~ 8.6e9 and
+    //  removes the structural correlation.
     // ---------------------------------------------------------------
     reg [23:0] lfsr;
     wire lfsr_fb = lfsr[22] ^ lfsr[17];
@@ -109,7 +115,7 @@ module tt_um_pettit_galton
     reg [9:0]        ball_x_pix;    // pixel x offset from 320 (slides toward slot*16)
     wire [9:0]       ball_x_off;
     reg [3:0]        stage;         // 0..13 pegs hit
-    reg [5:0]        ball_count;    // 0..16
+//    reg [5:0]        ball_count;    // 0..16
     reg [7:0]        pause_count;
 
     // 14 histogram bins, 5 bits each (max 16)
@@ -170,7 +176,7 @@ module tt_um_pettit_galton
             ball_x_pix  <= 320;
             target_x_pix <= 320;
             stage       <= 0;
-            ball_count  <= 0;
+//            ball_count  <= 0;
             pause_count <= 0;
             hist0  <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
             hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
@@ -210,9 +216,10 @@ module tt_um_pettit_galton
                         4'd11: hist11 <= cur_hist + 5'd1;
                         default: hist12 <= cur_hist + 5'd1;
                     endcase
-                    ball_count  <= ball_count + 6'd1;
+//                    ball_count  <= ball_count + 6'd1;
                     pause_count <= 0;
-                    phase <= (ball_count == 6'd63) ? PH_PLONG : PH_PSHRT;
+//                    phase <= (ball_count == 6'd63) ? PH_PLONG : PH_PSHRT;
+                    phase <= (cur_hist == 5'd31) ? PH_PLONG : PH_PSHRT;
                 end else begin
                     if (!ui_in[0] || ball_y > 25)
                     ball_y <= ball_y + 10'd6;        // free fall
@@ -237,7 +244,7 @@ module tt_um_pettit_galton
                     ball_x_pix <= 320;
                     target_x_pix <= 320;
                     stage      <= 0;
-                    ball_count <= 0;
+//                    ball_count <= 0;
                     hist0  <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
                     hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
                     hist8  <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
@@ -296,8 +303,8 @@ module tt_um_pettit_galton
     wire peg_in_range = (peg_slot_abs <= {2'd0, nr});
 
     // Filled circle, radius 3 (dx²+dy² ≤ 9)
-//    wire [9:0] dx_sq = dx_abs_p * dx_abs_p;
-//    wire [9:0] dy_sq = dy_abs_p * dy_abs_p;
+    wire [8:0] dx_sq = dx_abs_p * dx_abs_p;
+    wire [8:0] dy_sq = dy_abs_p * dy_abs_p;
     wire is_peg = in_pf && pfy_valid && nr_valid && peg_in_range
                && ((dx_abs_p + dy_abs_p) <= 10'd2);
 
@@ -379,3 +386,4 @@ module tt_um_pettit_galton
     wire _unused = &{ena, ui_in, uio_in, 1'b0};
 
 endmodule
+
