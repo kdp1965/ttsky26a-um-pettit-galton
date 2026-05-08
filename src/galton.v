@@ -1,5 +1,7 @@
+`default_nettype none
+
 // =================================================================
-//  tt_um_pettit_galton : Galton Board / Plinko VGA Demo
+//  tt_um_pegs : Galton Board / Plinko VGA Demo
 //
 //  Drops one "steel ball" at a time through a 13-row diamond peg
 //  array. At each peg the ball randomly deflects left or right.
@@ -29,9 +31,8 @@
 //  decides the deflection. After 13 deflections the ball falls
 //  vertically until it lands on top of its bin's bar.
 // =================================================================
-`default_nettype none
 
-module tt_um_pettit_galton
+module tt_um_pegs
 (
     input  wire [7:0] ui_in,
     output wire [7:0] uo_out,   // VGA PMOD outputs
@@ -80,9 +81,16 @@ module tt_um_pettit_galton
     assign uio_oe  = 8'b0;
 
     wire frame_end = (h_count == 799) && (v_count == 524);
+    wire deflect_trigger;
 
     // ---------------------------------------------------------------
-    //  Use a single 23-bit LFSR for randomization.
+    //  Two coprime LFSRs whose outputs are XOR-mixed.  A single 16-bit
+    //  LFSR sampled at fixed per-ball intervals only has ~65k reachable
+    //  13-bit deflection sequences, so all-left / all-right runs are
+    //  effectively unreachable and the extreme bins never fill.
+    //  Combining a 16-bit (taps 16,14,13,11) and a 17-bit (taps 17,14)
+    //  maximal LFSR gives a period of (2^16-1)*(2^17-1) ~ 8.6e9 and
+    //  removes the structural correlation.
     // ---------------------------------------------------------------
     reg [23:0] lfsr;
     wire lfsr_fb = lfsr[22] ^ lfsr[17];
@@ -90,7 +98,8 @@ module tt_um_pettit_galton
         if (!rst_n) begin
             lfsr <= 23'h420000;
         end else begin
-            lfsr  <= {lfsr[22:0],  lfsr_fb};
+            if (deflect_trigger)
+              lfsr  <= {lfsr[22:0],  lfsr_fb};
         end
     end
     wire coin = lfsr[0];
@@ -114,7 +123,7 @@ module tt_um_pettit_galton
     reg [4:0] hist0,  hist1,  hist2,  hist3,
               hist4,  hist5,  hist6,  hist7,
               hist8,  hist9,  hist10, hist11,
-              hist12, hist13;
+              hist12;
 
     // bin index from final slot: ball_x_pix - left_edge (96) / 32 (slot size)
     wire [3:0] bin_idx;
@@ -137,8 +146,7 @@ module tt_um_pettit_galton
             4'd9:  cur_hist = hist9;
             4'd10: cur_hist = hist10;
             4'd11: cur_hist = hist11;
-            4'd12: cur_hist = hist12;
-            default: cur_hist = hist13;
+            default: cur_hist = hist12;
         endcase
     end
 
@@ -151,9 +159,9 @@ module tt_um_pettit_galton
 
     wire at_target = (ball_x_pix == target_x_pix);
 
-    wire deflect_trigger = (phase == PH_FALL) && (stage < 4'd13)
+    assign deflect_trigger = (phase == PH_FALL) && (stage < 4'd12)
                            && at_target && (ball_y >= next_touch_y);
-    wire land_trigger    = (phase == PH_FALL) && (stage == 4'd13)
+    wire land_trigger    = (phase == PH_FALL) && (stage == 4'd12)
                            && at_target && (ball_y >= landing_y);
 
     // Target x = slot * 16 (signed). Ball slides 1 px/frame toward target,
@@ -174,7 +182,7 @@ module tt_um_pettit_galton
             hist0  <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
             hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
             hist8  <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
-            hist12 <= 0; hist13 <= 0;
+            hist12 <= 0;;
         end else if (frame_end) begin
             case (phase)
             PH_FALL: begin
@@ -207,13 +215,13 @@ module tt_um_pettit_galton
                         4'd9:  hist9  <= cur_hist + 5'd1;
                         4'd10: hist10 <= cur_hist + 5'd1;
                         4'd11: hist11 <= cur_hist + 5'd1;
-                        4'd12: hist12 <= cur_hist + 5'd1;
-                        default: hist13 <= cur_hist + 5'd1;
+                        default: hist12 <= cur_hist + 5'd1;
                     endcase
                     ball_count  <= ball_count + 6'd1;
                     pause_count <= 0;
                     phase <= (ball_count == 6'd63) ? PH_PLONG : PH_PSHRT;
                 end else begin
+                    if (!ui_in[0] || ball_y > 25)
                     ball_y <= ball_y + 10'd6;        // free fall
                 end
             end
@@ -221,7 +229,7 @@ module tt_um_pettit_galton
             PH_PSHRT: begin
                 pause_count <= pause_count + 8'd1;
                 if (pause_count >= 8'd30) begin
-                    ball_y     <= 0;
+                    ball_y     <= 5;
                     ball_x_pix <= 320;
                     target_x_pix <= 320;
                     stage      <= 0;
@@ -240,7 +248,7 @@ module tt_um_pettit_galton
                     hist0  <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
                     hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
                     hist8  <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
-                    hist12 <= 0; hist13 <= 0;
+                    hist12 <= 0;
                     phase  <= PH_FALL;
                 end
             end
@@ -271,7 +279,7 @@ module tt_um_pettit_galton
     // top half of peg row 0 is within the non-negative range and
     // gets rendered.
     wire [9:0] pfy        = v_count - 10'd24;          // valid when v >= 24
-    wire       pfy_valid  = (v_count >= 10'd24) && (v_count < 10'd440);
+    wire       pfy_valid  = (v_count >= 10'd24) && (v_count < 10'd420);
     wire [3:0] nr         = pfy[8:5];                  // nearest peg row 0..12
     wire [4:0] yir        = pfy[4:0];                  // 0..31, 16 = on peg row
     wire signed [5:0] dy_s = $signed({1'b0, yir}) - 6'sd16;
@@ -295,10 +303,10 @@ module tt_um_pettit_galton
     wire peg_in_range = (peg_slot_abs <= {2'd0, nr});
 
     // Filled circle, radius 3 (dx²+dy² ≤ 9)
-    wire [9:0] dx_sq = dx_abs_p * dx_abs_p;
-    wire [9:0] dy_sq = dy_abs_p * dy_abs_p;
+    wire [8:0] dx_sq = dx_abs_p * dx_abs_p;
+    wire [8:0] dy_sq = dy_abs_p * dy_abs_p;
     wire is_peg = in_pf && pfy_valid && nr_valid && peg_in_range
-               && ((dx_sq + dy_sq) <= 10'd9);
+               && ((dx_abs_p + dy_abs_p) <= 10'd2);
 
     // ----------- Active Ball Rendering -----------------------------
     // Ball x = 320 + ball_x_pix  (pixel-accurate, slides between pegs)
@@ -321,7 +329,7 @@ module tt_um_pettit_galton
                 && (ball_dist_sq <= 10'd32);     // radius 8 (diameter 16)
 
     // ----------- Histogram Bars ------------------------------------
-    wire [9:0] hbin_off = h_count - 10'd96;             // 0..447
+    wire [9:0] hbin_off = h_count - 10'd80;             // 0..447
     wire [3:0] hbin     = hbin_off[8:5];                // 0..13
     wire [4:0] hbin_x   = hbin_off[4:0];                // 0..31
 
@@ -340,8 +348,7 @@ module tt_um_pettit_galton
             4'd9:  hist_for_bin = hist9;
             4'd10: hist_for_bin = hist10;
             4'd11: hist_for_bin = hist11;
-            4'd12: hist_for_bin = hist12;
-            default: hist_for_bin = hist13;
+            default: hist_for_bin = hist12;
         endcase
     end
 
@@ -352,7 +359,7 @@ module tt_um_pettit_galton
                         && (hist_for_bin != 5'd0);
 
     // Faint vertical bin separators below the peg field
-    wire bin_sep = in_pf && (v_count >= 10'd440) && (v_count < 10'd476)
+    wire bin_sep = in_pf && (v_count >= 10'd410) && (v_count < 10'd476)
                 && (hbin_x == 5'd0);
 
     // ===============================================================
