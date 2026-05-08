@@ -1,7 +1,5 @@
-`default_nettype none
-
 // =================================================================
-//  tt_um_pegs : Galton Board / Plinko VGA Demo
+//  tt_um_pettit_galton : Galton Board / Plinko VGA Demo
 //
 //  Drops one "steel ball" at a time through a 13-row diamond peg
 //  array. At each peg the ball randomly deflects left or right.
@@ -31,8 +29,9 @@
 //  decides the deflection. After 13 deflections the ball falls
 //  vertically until it lands on top of its bin's bar.
 // =================================================================
+`default_nettype none
 
-module tt_um_pegs
+module tt_um_pettit_galton
 (
     input  wire [7:0] ui_in,
     output wire [7:0] uo_out,   // VGA PMOD outputs
@@ -84,13 +83,7 @@ module tt_um_pegs
     wire deflect_trigger;
 
     // ---------------------------------------------------------------
-    //  Two coprime LFSRs whose outputs are XOR-mixed.  A single 16-bit
-    //  LFSR sampled at fixed per-ball intervals only has ~65k reachable
-    //  13-bit deflection sequences, so all-left / all-right runs are
-    //  effectively unreachable and the extreme bins never fill.
-    //  Combining a 16-bit (taps 16,14,13,11) and a 17-bit (taps 17,14)
-    //  maximal LFSR gives a period of (2^16-1)*(2^17-1) ~ 8.6e9 and
-    //  removes the structural correlation.
+    //  Use a single 23-bit LFSR for randomization.
     // ---------------------------------------------------------------
     reg [23:0] lfsr;
     wire lfsr_fb = lfsr[22] ^ lfsr[17];
@@ -303,8 +296,8 @@ module tt_um_pegs
     wire peg_in_range = (peg_slot_abs <= {2'd0, nr});
 
     // Filled circle, radius 3 (dx²+dy² ≤ 9)
-    wire [8:0] dx_sq = dx_abs_p * dx_abs_p;
-    wire [8:0] dy_sq = dy_abs_p * dy_abs_p;
+//    wire [9:0] dx_sq = dx_abs_p * dx_abs_p;
+//    wire [9:0] dy_sq = dy_abs_p * dy_abs_p;
     wire is_peg = in_pf && pfy_valid && nr_valid && peg_in_range
                && ((dx_abs_p + dy_abs_p) <= 10'd2);
 
