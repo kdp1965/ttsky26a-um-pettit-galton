@@ -1,7 +1,5 @@
-`default_nettype none
-
 // =================================================================
-//  tt_um_pegs : Galton Board / Plinko VGA Demo
+//  tt_um_pettit_galton : Galton Board / Plinko VGA Demo
 //
 //  Drops one "steel ball" at a time through a 13-row diamond peg
 //  array. At each peg the ball randomly deflects left or right.
@@ -31,6 +29,7 @@
 //  decides the deflection. After 13 deflections the ball falls
 //  vertically until it lands on top of its bin's bar.
 // =================================================================
+`default_nettype none
 
 module tt_um_pettit_galton
 (
