@@ -91,14 +91,14 @@ module tt_um_pettit_galton
     //  maximal LFSR gives a period of (2^16-1)*(2^17-1) ~ 8.6e9 and
     //  removes the structural correlation.
     // ---------------------------------------------------------------
-    reg [22:0] lfsr;
-    wire lfsr_fb = lfsr[22] ^ lfsr[17];
+    reg [16:0] lfsr;
+    wire lfsr_fb = lfsr[16] ^ lfsr[13];
     always @(posedge clk) begin
         if (!rst_n) begin
-            lfsr <= 23'h420000;
+            lfsr <= 17'h12000;
         end else begin
             if (deflect_trigger)
-              lfsr  <= {lfsr[22:0],  lfsr_fb};
+              lfsr  <= {lfsr[16:0],  lfsr_fb};
         end
     end
     wire coin = lfsr[0];
