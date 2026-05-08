@@ -97,8 +97,7 @@ module tt_um_pettit_galton
         if (!rst_n) begin
             lfsr <= 17'h12000;
         end else begin
-            if (deflect_trigger)
-              lfsr  <= {lfsr[16:0],  lfsr_fb};
+            lfsr  <= {lfsr[16:0],  lfsr_fb};
         end
     end
     wire coin = lfsr[0];
@@ -115,14 +114,13 @@ module tt_um_pettit_galton
     reg [9:0]        ball_x_pix;    // pixel x offset from 320 (slides toward slot*16)
     wire [9:0]       ball_x_off;
     reg [3:0]        stage;         // 0..13 pegs hit
-//    reg [5:0]        ball_count;    // 0..16
     reg [7:0]        pause_count;
 
     // 14 histogram bins, 5 bits each (max 16)
-    reg [4:0] hist0,  hist1,  hist2,  hist3,
-              hist4,  hist5,  hist6,  hist7,
-              hist8,  hist9,  hist10, hist11,
-              hist12;
+    reg [2:0] hist0,  hist1,  hist11, hist12;
+    reg [4:0] hist2,  hist3,  hist4,  hist5,  
+              hist6,  hist7,  hist8,  hist9,
+              hist10;
 
     // bin index from final slot: ball_x_pix - left_edge (96) / 32 (slot size)
     wire [3:0] bin_idx;
@@ -130,11 +128,13 @@ module tt_um_pettit_galton
     assign bin_idx    = ball_x_off[8:5];
 
     // current count for the bin the ball is heading into
-    reg [4:0] cur_hist;
+    reg  [4:0] cur_hist;
+    wire [4:0] next_hist;
+    assign     next_hist = cur_hist == 5'd31 ? 5'd31 : cur_hist + 5'd1;
     always @(*) begin
         case (bin_idx)
-            4'd0:  cur_hist = hist0;
-            4'd1:  cur_hist = hist1;
+            4'd0:  cur_hist = {2'h0, hist0};
+            4'd1:  cur_hist = {2'h0, hist1};
             4'd2:  cur_hist = hist2;
             4'd3:  cur_hist = hist3;
             4'd4:  cur_hist = hist4;
@@ -144,8 +144,8 @@ module tt_um_pettit_galton
             4'd8:  cur_hist = hist8;
             4'd9:  cur_hist = hist9;
             4'd10: cur_hist = hist10;
-            4'd11: cur_hist = hist11;
-            default: cur_hist = hist12;
+            4'd11: cur_hist = {2'h0, hist11};
+            default: cur_hist = {2'h0, hist12};
         endcase
     end
 
@@ -176,7 +176,6 @@ module tt_um_pettit_galton
             ball_x_pix  <= 320;
             target_x_pix <= 320;
             stage       <= 0;
-//            ball_count  <= 0;
             pause_count <= 0;
             hist0  <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
             hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
@@ -202,23 +201,21 @@ module tt_um_pettit_galton
                 end else if (land_trigger) begin
                     ball_y <= landing_y;             // snap to landing y
                     case (bin_idx)
-                        4'd0:  hist0  <= cur_hist + 5'd1;
-                        4'd1:  hist1  <= cur_hist + 5'd1;
-                        4'd2:  hist2  <= cur_hist + 5'd1;
-                        4'd3:  hist3  <= cur_hist + 5'd1;
-                        4'd4:  hist4  <= cur_hist + 5'd1;
-                        4'd5:  hist5  <= cur_hist + 5'd1;
-                        4'd6:  hist6  <= cur_hist + 5'd1;
-                        4'd7:  hist7  <= cur_hist + 5'd1;
-                        4'd8:  hist8  <= cur_hist + 5'd1;
-                        4'd9:  hist9  <= cur_hist + 5'd1;
-                        4'd10: hist10 <= cur_hist + 5'd1;
-                        4'd11: hist11 <= cur_hist + 5'd1;
-                        default: hist12 <= cur_hist + 5'd1;
+                        4'd0:  hist0  <= next_hist[2:0];
+                        4'd1:  hist1  <= next_hist[2:0];
+                        4'd2:  hist2  <= next_hist;
+                        4'd3:  hist3  <= next_hist;
+                        4'd4:  hist4  <= next_hist;
+                        4'd5:  hist5  <= next_hist;
+                        4'd6:  hist6  <= next_hist;
+                        4'd7:  hist7  <= next_hist;
+                        4'd8:  hist8  <= next_hist;
+                        4'd9:  hist9  <= next_hist;
+                        4'd10: hist10 <= next_hist;
+                        4'd11: hist11 <= next_hist[2:0];
+                        default: hist12 <= next_hist[2:0];
                     endcase
-//                    ball_count  <= ball_count + 6'd1;
                     pause_count <= 0;
-//                    phase <= (ball_count == 6'd63) ? PH_PLONG : PH_PSHRT;
                     phase <= (cur_hist == 5'd31) ? PH_PLONG : PH_PSHRT;
                 end else begin
                     if (!ui_in[0] || ball_y > 25)
@@ -244,7 +241,6 @@ module tt_um_pettit_galton
                     ball_x_pix <= 320;
                     target_x_pix <= 320;
                     stage      <= 0;
-//                    ball_count <= 0;
                     hist0  <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
                     hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
                     hist8  <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
