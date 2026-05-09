@@ -132,28 +132,24 @@ module tt_um_pettit_galton
     reg [16:0] lfsr;
     reg [10:0] lfsr2;
     reg [22:0] lfsr3;
-    reg [19:0] lfsr4;
     wire lfsr_fb = lfsr[16] ^ lfsr[13];
     wire lfsr2_fb = lfsr2[10] ^ lfsr2[8];
     wire lfsr3_fb = lfsr3[22] ^ lfsr3[17];
-    wire lfsr4_fb = lfsr4[19] ^ lfsr4[16];
     always @(posedge clk) begin
         if (!rst_n) begin
             lfsr <= 17'h12000;
             lfsr2 <= 11'h500;
             lfsr3 <= 23'h420000;
-            lfsr4 <= 20'h90000;
         end else begin
-            if (deflect_trigger | ui_in[0] | gamepad_a)
+            if (deflect_trigger | ui_in[0] | gamepad_a | gamepad_left | gamepad_right)
             begin
               lfsr  <= {lfsr[15:0],  lfsr_fb};
               lfsr2  <= {lfsr2[9:0],  lfsr2_fb};
               lfsr3  <= {lfsr3[21:0],  lfsr3_fb};
-              lfsr4  <= {lfsr4[18:0],  lfsr4_fb};
             end
         end
     end
-    wire coin = lfsr[0] ^ lfsr3[0] ^ lfsr2[0] ^ lfsr4[0];
+    wire coin = lfsr[0] ^ lfsr3[0] ^ lfsr2[0];
 
     // ---------------------------------------------------------------
     //  Game State Machine
@@ -167,7 +163,7 @@ module tt_um_pettit_galton
     reg [9:0]        ball_x_pix;    // pixel x offset from 320 (slides toward slot*16)
     wire [9:0]       ball_x_off;
     reg [3:0]        stage;         // 0..13 pegs hit
-    reg [7:0]        pause_count;
+    reg [1:0]        pause_count;
     reg [2:0]        ball_speed;
     reg              up_p1;
     reg              down_p1;
@@ -239,7 +235,7 @@ module tt_um_pettit_galton
     end
 
     // Landing y = 472 - 2*cur_hist  (ball center sits on bar top)
-    wire [9:0] landing_y = 10'd472 - {4'd0, cur_hist, 1'b0};
+    wire [9:0] landing_y = 10'd472 - {4'd0, cur_hist};
 
     // Y at which the ball first "touches" the peg in row `stage` from above.
     // Ball radius 8 + peg radius 3 = 11 px between centres at contact.
@@ -358,7 +354,6 @@ module tt_um_pettit_galton
                             pitch_idx <= 4'd0;
                         end
                     end else if (land_trigger) begin
-                        ball_y <= landing_y;             // snap to landing y
                         case (bin_idx)
                             4'd0:  hist0  <= next_hist[2:0];
                             4'd1:  hist1  <= next_hist[2:0];
@@ -376,6 +371,8 @@ module tt_um_pettit_galton
                         endcase
                         pause_count <= 0;
                         phase <= (cur_hist == 6'd63) ? PH_PLONG : PH_PSHRT;
+                        ball_y <= (cur_hist == 6'h63) ? 0 : landing_y;             // snap to landing y
+
                         // BCD increment with wrap at 999
                         if (drop_bcd[3:0] == 4'd9) begin
                             drop_bcd[3:0] <= 4'd0;
@@ -400,8 +397,8 @@ module tt_um_pettit_galton
                 end
                 
                 PH_PSHRT: begin
-                    pause_count <= pause_count + 8'd1;
-                    if (pause_count >= 8'd30) begin
+                    pause_count <= pause_count + 3'd1;
+                    if (pause_count == 3'd3) begin
                         ball_y       <= 5;
                         ball_x_pix   <= 320;
                         target_x_pix <= 320;
@@ -411,8 +408,8 @@ module tt_um_pettit_galton
                 end
                 
                 PH_PLONG: begin
-                    pause_count <= pause_count + 8'd1;
-                    if (pause_count >= 8'd180) begin
+                    ball_y <= ball_y + 10'd1;
+                    if (ball_y >= 10'd180) begin
                         ball_y       <= 0;
                         ball_x_pix   <= 320;
                         target_x_pix <= 320;
@@ -652,7 +649,7 @@ module tt_um_pettit_galton
         endcase
     end
 
-    wire [3:0] ban_row3    = {ban_glyph_row, 1'b0} + {1'b0, ban_glyph_row};
+   wire [3:0] ban_row3    = {ban_glyph_row, 1'b0} + {1'b0, ban_glyph_row};
     wire [3:0] ban_bit_idx = 4'd14 - ban_row3 - {2'b0, ban_glyph_col};
     wire       ban_pixel   = letter_glyph[ban_bit_idx];
     wire       is_text     = (in_tiny_box || in_gal_box)
@@ -734,7 +731,7 @@ module tt_um_pettit_galton
             4'd10: sin_q = 5'd26;
             4'd11: sin_q = 5'd28;
             4'd12: sin_q = 5'd29;
-            4'd13: sin_q = 5'd30;
+            4'd13: sin_q = 50;
             4'd14: sin_q = 5'd31;
             default: sin_q = 5'd31;
         endcase
