@@ -12,7 +12,7 @@
 //  on the standard TinyVGA PMOD pinout.
 //
 //  Geometry (all in screen pixels):
-//    - Playfield x  : 96..543 (448 wide, 14 bins x 32 px)
+//    - Playfield x  : 96..543 (448 wide, 13 bins x 32 px)
 //    - Side rails   : 94..95 and 544..545 (2 px white)
 //    - Peg rows     : y = 40 + r*32, r = 0..12 (13 rows)
 //    - Peg columns  : x = 320 + slot*16, slot ∈ {-r,-r+2,...,r}
@@ -22,11 +22,10 @@
 //
 //  Ball state (slot lattice, 1 ball in flight):
 //    - ball_y[9:0]    : pixel y, advances 2 px / frame
-//    - slot[4:0]signed: -13..+13, step ±1 per peg row
-//    - stage[3:0]     : pegs hit so far (0..13)
+//    - stage[3:0]     : pegs hit so far (0..12)
 //
 //  When ball_y crosses the next peg row (40 + stage*32) the LFSR
-//  decides the deflection. After 13 deflections the ball falls
+//  decides the deflection. After 12 deflections the ball falls
 //  vertically until it lands on top of its bin's bar.
 // =================================================================
 `default_nettype none
@@ -168,7 +167,6 @@ module tt_um_pettit_galton
     reg [9:0]        ball_x_pix;    // pixel x offset from 320 (slides toward slot*16)
     wire [9:0]       ball_x_off;
     reg [3:0]        stage;         // 0..13 pegs hit
-    reg [5:0]        ball_count;    // 0..16
     reg [7:0]        pause_count;
     reg [2:0]        ball_speed;
     reg              up_p1;
@@ -262,21 +260,20 @@ module tt_um_pettit_galton
  
     always @(posedge clk) begin
         if (!rst_n) begin
-            phase       <= PH_FALL;
-            ball_y      <= 0;
-            ball_x_pix  <= 320;
-            target_x_pix <= 320;
-            stage       <= 0;
-            ball_count  <= 0;
-            pause_count <= 0;
-            hist0  <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
-            hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
-            hist8  <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
-            hist12 <= 0;
-            drop_bcd    <= 12'hff0;
-            ball_speed  <= 3'd6;
-            up_p1  <= 0;
-            down_p1 <= 0;
+            phase         <= PH_FALL;
+            ball_y        <= 0;
+            ball_x_pix    <= 320;
+            target_x_pix  <= 320;
+            stage         <= 0;
+            pause_count   <= 0;
+            hist0         <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
+            hist4         <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
+            hist8         <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
+            hist12        <= 0;
+            drop_bcd      <= 12'hff0;
+            ball_speed    <= 3'd6;
+            up_p1         <= 0;
+            down_p1       <= 0;
             left_p1       <= 0;
             right_p1      <= 0;
             arm_left      <= 0;
@@ -377,7 +374,6 @@ module tt_um_pettit_galton
                             4'd11: hist11 <= next_hist[2:0];
                             default: hist12 <= next_hist[2:0];
                         endcase
-                        ball_count  <= ball_count + 6'd1;
                         pause_count <= 0;
                         phase <= (cur_hist == 6'd63) ? PH_PLONG : PH_PSHRT;
                         // BCD increment with wrap at 999
@@ -406,27 +402,27 @@ module tt_um_pettit_galton
                 PH_PSHRT: begin
                     pause_count <= pause_count + 8'd1;
                     if (pause_count >= 8'd30) begin
-                        ball_y     <= 5;
-                        ball_x_pix <= 320;
+                        ball_y       <= 5;
+                        ball_x_pix   <= 320;
                         target_x_pix <= 320;
-                        stage      <= 0;
-                        phase      <= PH_FALL;
+                        stage        <= 0;
+                        phase        <= PH_FALL;
                     end
                 end
                 
                 PH_PLONG: begin
                     pause_count <= pause_count + 8'd1;
                     if (pause_count >= 8'd180) begin
-                        ball_y     <= 0;
-                        ball_x_pix <= 320;
+                        ball_y       <= 0;
+                        ball_x_pix   <= 320;
                         target_x_pix <= 320;
-                        stage      <= 0;
-                        ball_count <= 0;
-                        hist0  <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
-                        hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
-                        hist8  <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
-                        hist12 <= 0;
-                        phase  <= PH_FALL;
+                        stage        <= 0;
+                        drop_bcd     <= 12'hff0;
+                        hist0        <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
+                        hist4        <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
+                        hist8        <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
+                        hist12       <= 0;
+                        phase        <= PH_FALL;
                     end
                 end
                 
