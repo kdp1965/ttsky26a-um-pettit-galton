@@ -92,15 +92,28 @@ module tt_um_pettit_galton
     //  removes the structural correlation.
     // ---------------------------------------------------------------
     reg [16:0] lfsr;
+    reg [10:0] lfsr2;
+    reg [3:0] lfsr3;
     wire lfsr_fb = lfsr[16] ^ lfsr[13];
+    wire lfsr2_fb = lfsr2[10] ^ lfsr2[8];
+    wire lfsr3_fb = lfsr3[3] ^ lfsr3[2];
     always @(posedge clk) begin
         if (!rst_n) begin
             lfsr <= 17'h12000;
+            lfsr2 <= 11'h500;
+            lfsr3 <= 4'hC;
         end else begin
-            lfsr  <= {lfsr[16:0],  lfsr_fb};
+            if (deflect_trigger | ui_in[0])
+            begin
+              if (lfsr3[0])
+                lfsr  <= {lfsr[15:0],  lfsr_fb};
+              if (!lfsr3[0])
+                lfsr2  <= {lfsr2[9:0],  lfsr2_fb};
+              lfsr3  <= {lfsr3[2:0],  lfsr3_fb};
+            end
         end
     end
-    wire coin = lfsr[0];
+    wire coin = lfsr3[0] ? lfsr[0] : lfsr2[0];
 
     // ---------------------------------------------------------------
     //  Game State Machine
@@ -118,9 +131,9 @@ module tt_um_pettit_galton
 
     // 14 histogram bins, 5 bits each (max 16)
     reg [2:0] hist0,  hist1,  hist11, hist12;
-    reg [4:0] hist2,  hist3,  hist4,  hist5,  
-              hist6,  hist7,  hist8,  hist9,
-              hist10;
+    reg [3:0] hist2,  hist10;
+    reg [4:0] hist3,  hist4,  hist5,  
+              hist6,  hist7,  hist8,  hist9;
 
     // bin index from final slot: ball_x_pix - left_edge (96) / 32 (slot size)
     wire [3:0] bin_idx;
@@ -135,7 +148,7 @@ module tt_um_pettit_galton
         case (bin_idx)
             4'd0:  cur_hist = {2'h0, hist0};
             4'd1:  cur_hist = {2'h0, hist1};
-            4'd2:  cur_hist = hist2;
+            4'd2:  cur_hist = {1'b0, hist2};
             4'd3:  cur_hist = hist3;
             4'd4:  cur_hist = hist4;
             4'd5:  cur_hist = hist5;
@@ -143,7 +156,7 @@ module tt_um_pettit_galton
             4'd7:  cur_hist = hist7;
             4'd8:  cur_hist = hist8;
             4'd9:  cur_hist = hist9;
-            4'd10: cur_hist = hist10;
+            4'd10: cur_hist = {1'b0, hist10};
             4'd11: cur_hist = {2'h0, hist11};
             default: cur_hist = {2'h0, hist12};
         endcase
@@ -201,9 +214,9 @@ module tt_um_pettit_galton
                 end else if (land_trigger) begin
                     ball_y <= landing_y;             // snap to landing y
                     case (bin_idx)
-                        4'd0:  hist0  <= next_hist[2:0];
-                        4'd1:  hist1  <= next_hist[2:0];
-                        4'd2:  hist2  <= next_hist;
+                        4'd0:  hist0  <= next_hist[2:0] | {3{|next_hist[4:3]}};
+                        4'd1:  hist1  <= next_hist[2:0] | {3{|next_hist[4:3]}};
+                        4'd2:  hist2  <= next_hist[3:0] | {4{next_hist[4]}};
                         4'd3:  hist3  <= next_hist;
                         4'd4:  hist4  <= next_hist;
                         4'd5:  hist5  <= next_hist;
@@ -211,9 +224,9 @@ module tt_um_pettit_galton
                         4'd7:  hist7  <= next_hist;
                         4'd8:  hist8  <= next_hist;
                         4'd9:  hist9  <= next_hist;
-                        4'd10: hist10 <= next_hist;
-                        4'd11: hist11 <= next_hist[2:0];
-                        default: hist12 <= next_hist[2:0];
+                        4'd10: hist10 <= next_hist[3:0] | {4{next_hist[4]}};
+                        4'd11: hist11 <= next_hist[2:0] | {3{|next_hist[4:3]}};
+                        default: hist12 <= next_hist[2:0] | {3{|next_hist[4:3]}};
                     endcase
                     pause_count <= 0;
                     phase <= (cur_hist == 5'd31) ? PH_PLONG : PH_PSHRT;
