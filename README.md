@@ -52,8 +52,8 @@ Balls simulated: 100000
  | 12 |        26 |      24.4 |  1.065 |
 
 Outer-bin summary:
-  bin  0 (12 lefts):  28 hits   (first at ball #5986)
-  bin 12 (12 rights): 26 hits   (first at ball #9805)
+ - bin  0 (12 lefts):  28 hits   (first at ball #5986)
+ - bin 12 (12 rights): 26 hits   (first at ball #9805)
 
 Histogram (max bin = 22594):
 
