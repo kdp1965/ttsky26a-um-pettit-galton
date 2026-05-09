@@ -82,15 +82,51 @@ module tt_um_pettit_galton
     wire frame_end = (h_count == 799) && (v_count == 524);
     wire deflect_trigger;
 
-    // ---------------------------------------------------------------
-    //  Two coprime LFSRs whose outputs are XOR-mixed.  A single 16-bit
-    //  LFSR sampled at fixed per-ball intervals only has ~65k reachable
-    //  13-bit deflection sequences, so all-left / all-right runs are
-    //  effectively unreachable and the extreme bins never fill.
-    //  Combining a 16-bit (taps 16,14,13,11) and a 17-bit (taps 17,14)
-    //  maximal LFSR gives a period of (2^16-1)*(2^17-1) ~ 8.6e9 and
-    //  removes the structural correlation.
-    // ---------------------------------------------------------------
+    // ===============================================================
+    // Instantiate the gampad controller
+    // ===============================================================
+    wire gamepad_is_present;
+    wire gamepad_b;
+    wire gamepad_y;
+    wire gamepad_select;
+    wire gamepad_start;
+    wire gamepad_up;
+    wire gamepad_down;
+    wire gamepad_left;
+    wire gamepad_right;
+    wire gamepad_a;
+    wire gamepad_x;
+    wire gamepad_l;
+    wire gamepad_r;
+
+    gamepad_pmod_single gamepad
+    (
+        // Inputs:
+        .rst_n      ( rst_n              ),
+        .clk        ( clk                ),
+        .pmod_data  ( ui_in[6]           ),
+        .pmod_clk   ( ui_in[5]           ),
+        .pmod_latch ( ui_in[4]           ),
+  
+        // Outputs:
+        .is_present ( gamepad_is_present ),
+        .b          ( gamepad_b          ),
+        .y          ( gamepad_y          ),
+        .select     ( gamepad_select     ),
+        .start      ( gamepad_start      ),
+        .up         ( gamepad_up         ),
+        .down       ( gamepad_down       ),
+        .left       ( gamepad_left       ),
+        .right      ( gamepad_right      ),
+        .a          ( gamepad_a          ),
+        .x          ( gamepad_x          ),
+        .l          ( gamepad_l          ),
+        .r          ( gamepad_r          )
+    );
+
+    // ===============================================================
+    //  Four coprime LFSRs whose outputs are XOR-mixed.
+    // ===============================================================
     reg [16:0] lfsr;
     reg [10:0] lfsr2;
     reg [22:0] lfsr3;
@@ -106,7 +142,7 @@ module tt_um_pettit_galton
             lfsr3 <= 23'h420000;
             lfsr4 <= 20'h90000;
         end else begin
-            if (deflect_trigger | ui_in[0])
+            if (deflect_trigger | ui_in[0] | gamepad_a)
             begin
               lfsr  <= {lfsr[15:0],  lfsr_fb};
               lfsr2  <= {lfsr2[9:0],  lfsr2_fb};
@@ -131,6 +167,33 @@ module tt_um_pettit_galton
     reg [3:0]        stage;         // 0..13 pegs hit
     reg [5:0]        ball_count;    // 0..16
     reg [7:0]        pause_count;
+    reg [2:0]        ball_speed;
+    reg              up_p1;
+    reg              down_p1;
+
+    // ---- Pinball-style nudge: left/right gamepad buttons ----------
+    // The user can "nudge" the next peg deflection by pressing left or
+    // right just as the ball reaches a peg.  An edge-detected press
+    // arms a brief window (~6 frames) during which the next
+    // deflect_trigger uses the user's choice instead of the random
+    // coin.  After any press, a longer lockout (~20 frames) ignores
+    // further presses, so holding or mashing the button is useless.
+    localparam [3:0] NUDGE_ARM_FRAMES  = 4'd6;
+    localparam [4:0] NUDGE_LOCK_FRAMES = 5'd20;
+    reg              left_p1;
+    reg              right_p1;
+    reg [3:0]        arm_left;
+    reg [3:0]        arm_right;
+    reg [4:0]        nudge_lockout;
+    wire left_edge   = gamepad_left  & ~left_p1;
+    wire right_edge  = gamepad_right & ~right_p1;
+    wire nudge_left  = (arm_left  != 4'd0) || (left_edge  && nudge_lockout == 5'd0);
+    wire nudge_right = (arm_right != 4'd0) || (right_edge && nudge_lockout == 5'd0);
+
+    // Cumulative ball-drop counter, displayed top-right as 3 BCD digits
+    // (000..999, wraps).  Increments every time a ball lands in a bin,
+    // and is NOT cleared when the histogram is reset between cycles.
+    reg [11:0]       drop_bcd;      // {hundreds, tens, units}
 
     // 14 histogram bins, 5 bits each (max 31)
     reg [2:0] hist0, hist1, hist11, hist12;
@@ -197,78 +260,147 @@ module tt_um_pettit_galton
             hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
             hist8  <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
             hist12 <= 0;
-        end else if (frame_end) begin
-            case (phase)
-            PH_FALL: begin
-                // Ball alternates between two motion modes:
-                //   - sliding horizontally (when not yet at slot's column)
-                //   - falling vertically  (when at slot's column)
-                // This makes the peg "catch" the ball: descent stops while
-                // the ball slides off to its new column.
-                if (!at_target) begin
-                    if (ball_x_pix < target_x_pix)
-                        ball_x_pix <= ball_x_pix + 10'sd2;
-                    else
-                        ball_x_pix <= ball_x_pix - 10'sd2;
-                end else if (deflect_trigger) begin
-                    ball_y <= next_touch_y;          // snap to contact y
-                    stage  <= stage + 4'd1;
-                    target_x_pix <= coin ? ball_x_pix + 16 : ball_x_pix - 16;
-                end else if (land_trigger) begin
-                    ball_y <= landing_y;             // snap to landing y
-                    case (bin_idx)
-                        4'd0:  hist0  <= next_hist[2:0];
-                        4'd1:  hist1  <= next_hist[2:0];
-                        4'd2:  hist2  <= next_hist[3:0];
-                        4'd3:  hist3  <= next_hist;
-                        4'd4:  hist4  <= next_hist;
-                        4'd5:  hist5  <= next_hist;
-                        4'd6:  hist6  <= next_hist;
-                        4'd7:  hist7  <= next_hist;
-                        4'd8:  hist8  <= next_hist;
-                        4'd9:  hist9  <= next_hist;
-                        4'd10: hist10 <= next_hist[3:0];
-                        4'd11: hist11 <= next_hist[2:0];
-                        default: hist12 <= next_hist[2:0];
-                    endcase
-                    ball_count  <= ball_count + 6'd1;
-                    pause_count <= 0;
-                    phase <= (cur_hist == 6'd63) ? PH_PLONG : PH_PSHRT;
-                end else begin
-                    if (!ui_in[0] || ball_y > 25)
-                      ball_y <= ball_y + 10'd6;        // free fall
-                end
-            end
+            drop_bcd    <= 12'hff0;
+            ball_speed  <= 3'd6;
+            up_p1  <= 0;
+            down_p1 <= 0;
+            left_p1       <= 0;
+            right_p1      <= 0;
+            arm_left      <= 0;
+            arm_right     <= 0;
+            nudge_lockout <= 0;
+        end else begin
+            if (frame_end) begin
+                up_p1 <= gamepad_up;
+                down_p1 <= gamepad_down;
+                left_p1  <= gamepad_left;
+                right_p1 <= gamepad_right;
 
-            PH_PSHRT: begin
-                pause_count <= pause_count + 8'd1;
-                if (pause_count >= 8'd30) begin
-                    ball_y     <= 5;
-                    ball_x_pix <= 320;
-                    target_x_pix <= 320;
-                    stage      <= 0;
-                    phase      <= PH_FALL;
-                end
-            end
+                // Decay arm windows and lockout each frame
+                if (arm_left      != 4'd0) arm_left      <= arm_left      - 4'd1;
+                if (arm_right     != 4'd0) arm_right     <= arm_right     - 4'd1;
+                if (nudge_lockout != 5'd0) nudge_lockout <= nudge_lockout - 5'd1;
 
-            PH_PLONG: begin
-                pause_count <= pause_count + 8'd1;
-                if (pause_count >= 8'd180) begin
-                    ball_y     <= 0;
-                    ball_x_pix <= 320;
-                    target_x_pix <= 320;
-                    stage      <= 0;
-                    ball_count <= 0;
-                    hist0  <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
-                    hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
-                    hist8  <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
-                    hist12 <= 0;
-                    phase  <= PH_FALL;
+                // Arm a fresh press if not in lockout (single button at a time)
+                if (nudge_lockout == 5'd0) begin
+                    if (left_edge && !right_edge) begin
+                        arm_left      <= NUDGE_ARM_FRAMES;
+                        nudge_lockout <= NUDGE_LOCK_FRAMES;
+                    end else if (right_edge && !left_edge) begin
+                        arm_right     <= NUDGE_ARM_FRAMES;
+                        nudge_lockout <= NUDGE_LOCK_FRAMES;
+                    end
                 end
-            end
 
-            default: phase <= PH_FALL;
-            endcase
+                // Make the ball drop faster
+                if (gamepad_up && !up_p1 && ball_speed != 7)
+                    ball_speed <= ball_speed + 3'h1;
+
+                if (gamepad_down && !down_p1 && ball_speed != 2)
+                    ball_speed <= ball_speed - 3'h1;
+
+                case (phase)
+                PH_FALL: begin
+                    // Ball alternates between two motion modes:
+                    //   - sliding horizontally (when not yet at slot's column)
+                    //   - falling vertically  (when at slot's column)
+                    // This makes the peg "catch" the ball: descent stops while
+                    // the ball slides off to its new column.
+                    if (!at_target) begin
+                        if (ball_x_pix < target_x_pix)
+                            ball_x_pix <= ball_x_pix + 10'sd2;
+                        else
+                            ball_x_pix <= ball_x_pix - 10'sd2;
+                    end else if (deflect_trigger) begin
+                        ball_y <= next_touch_y;          // snap to contact y
+                        stage  <= stage + 4'd1;
+                        // Pinball nudge: a fresh edge OR an armed press
+                        // overrides the random coin.  Either way, the
+                        // arm windows are consumed (lockout is already
+                        // running from the press itself).
+                        if (nudge_left) begin
+                            target_x_pix <= ball_x_pix - 16;
+                        end else if (nudge_right) begin
+                            target_x_pix <= ball_x_pix + 16;
+                        end else begin
+                            target_x_pix <= coin ? ball_x_pix + 16
+                                                 : ball_x_pix - 16;
+                        end
+                        arm_left  <= 4'd0;
+                        arm_right <= 4'd0;
+                    end else if (land_trigger) begin
+                        ball_y <= landing_y;             // snap to landing y
+                        case (bin_idx)
+                            4'd0:  hist0  <= next_hist[2:0];
+                            4'd1:  hist1  <= next_hist[2:0];
+                            4'd2:  hist2  <= next_hist[3:0];
+                            4'd3:  hist3  <= next_hist;
+                            4'd4:  hist4  <= next_hist;
+                            4'd5:  hist5  <= next_hist;
+                            4'd6:  hist6  <= next_hist;
+                            4'd7:  hist7  <= next_hist;
+                            4'd8:  hist8  <= next_hist;
+                            4'd9:  hist9  <= next_hist;
+                            4'd10: hist10 <= next_hist[3:0];
+                            4'd11: hist11 <= next_hist[2:0];
+                            default: hist12 <= next_hist[2:0];
+                        endcase
+                        ball_count  <= ball_count + 6'd1;
+                        pause_count <= 0;
+                        phase <= (cur_hist == 6'd63) ? PH_PLONG : PH_PSHRT;
+                        // BCD increment with wrap at 999
+                        if (drop_bcd[3:0] == 4'd9) begin
+                            drop_bcd[3:0] <= 4'd0;
+                            if (drop_bcd[7:4] == 4'd9) begin
+                                drop_bcd[7:4] <= 4'd0;
+                                if (drop_bcd[11:8] == 4'd9)
+                                    drop_bcd[11:8] <= 4'd0;
+                                else if (drop_bcd[11:8] == 4'd15)
+                                    drop_bcd[11:8] <= 4'd1;
+                                else
+                                    drop_bcd[11:8] <= drop_bcd[11:8] + 4'd1;
+                            end else if (drop_bcd[7:4] == 4'd15)
+                                drop_bcd[7:4] <= 4'd1;
+                            else
+                                drop_bcd[7:4] <= drop_bcd[7:4] + 4'd1;
+                        end else
+                            drop_bcd[3:0] <= drop_bcd[3:0] + 4'd1;
+                    end else begin
+                        if ((!gamepad_a && !ui_in[0]) || ball_y > 25)
+                          ball_y <= ball_y + {7'h0, ball_speed};        // free fall
+                    end
+                end
+                
+                PH_PSHRT: begin
+                    pause_count <= pause_count + 8'd1;
+                    if (pause_count >= 8'd30) begin
+                        ball_y     <= 5;
+                        ball_x_pix <= 320;
+                        target_x_pix <= 320;
+                        stage      <= 0;
+                        phase      <= PH_FALL;
+                    end
+                end
+                
+                PH_PLONG: begin
+                    pause_count <= pause_count + 8'd1;
+                    if (pause_count >= 8'd180) begin
+                        ball_y     <= 0;
+                        ball_x_pix <= 320;
+                        target_x_pix <= 320;
+                        stage      <= 0;
+                        ball_count <= 0;
+                        hist0  <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
+                        hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
+                        hist8  <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
+                        hist12 <= 0;
+                        phase  <= PH_FALL;
+                    end
+                end
+                
+                default: phase <= PH_FALL;
+                endcase
+            end
         end
     end
 
@@ -379,6 +511,125 @@ module tt_um_pettit_galton
     wire bin_sep = in_pf && (v_count >= 10'd410) && (v_count < 10'd476)
                 && (hbin_x == 5'd0);
 
+    // ----------- Ball-Drop Counter (3 BCD digits, top-right) -------
+    // 3x5 block font scaled 4x: each digit cell is 12x20 px, with a
+    // 4 px gap between digits.  Total width = 3*16 - 4 = 44 px.
+    // Placed at h_count 580..623, v_count 8..27.
+    localparam [9:0] CNT_X0 = 10'd580;
+    localparam [9:0] CNT_Y0 = 10'd8;
+    wire in_cnt_box = (h_count >= CNT_X0) && (h_count < CNT_X0 + 10'd48)
+                   && (v_count >= CNT_Y0) && (v_count < CNT_Y0 + 10'd20);
+    wire [9:0] cnt_h     = h_count - CNT_X0;       // 0..47
+    wire [9:0] cnt_v     = v_count - CNT_Y0;       // 0..19
+    wire [1:0] cnt_digit = cnt_h[5:4];             // 0..2 (h/16)
+    wire [3:0] cnt_h_in  = cnt_h[3:0];             // 0..15 within digit slot
+    wire       in_cell   = (cnt_h_in < 4'd12);     // last 4 px = inter-digit gap
+    wire [1:0] glyph_col = cnt_h_in[3:2];          // 0..2 (h/4 within cell)
+    wire [2:0] glyph_row = cnt_v[4:2];             // 0..4 (v/4)
+
+    reg [3:0] cur_digit;
+    always @(*) begin
+        case (cnt_digit)
+            2'd0:    cur_digit = drop_bcd[11:8];   // hundreds
+            2'd1:    cur_digit = drop_bcd[7:4];    // tens
+            default: cur_digit = drop_bcd[3:0];    // units
+        endcase
+    end
+
+    // 3x5 block font, packed row-major: bit[14]=top-left .. bit[0]=bot-right
+    reg [14:0] glyph;
+    always @(*) begin
+        case (cur_digit)
+            4'd0:    glyph = 15'b111_101_101_101_111;
+            4'd1:    glyph = 15'b010_110_010_010_111;
+            4'd2:    glyph = 15'b111_001_111_100_111;
+            4'd3:    glyph = 15'b111_001_011_001_111;
+            4'd4:    glyph = 15'b101_101_111_001_001;
+            4'd5:    glyph = 15'b111_100_111_001_111;
+            4'd6:    glyph = 15'b111_100_111_101_111;
+            4'd7:    glyph = 15'b111_001_010_010_010;
+            4'd8:    glyph = 15'b111_101_111_101_111;
+            4'd9:    glyph = 15'b111_101_111_001_111;
+            4'd15:   glyph = 15'b000_000_000_000_000;
+            default: glyph = 15'b0;
+        endcase
+    end
+
+    wire [3:0] bit_idx     = 4'd14 - {1'b0, glyph_row} * 4'd3
+                                   - {2'b0, glyph_col};
+    wire       glyph_pixel = glyph[bit_idx];
+    wire       is_count    = in_cnt_box && in_cell && glyph_pixel;
+
+    // ----------- Side Banners: "TINY" left, "GALTON" right ---------
+    // Same 3x5 block font scaled 4x as the BCD counter.  Both banners
+    // sit inside the playfield, above peg row 0 (which starts at y=40).
+    //   TINY   : 4 letters → 4*16-4 = 60 px wide @ h=100..159
+    //   GALTON : 6 letters → 6*16-4 = 92 px wide @ h=448..539
+    localparam [9:0] TINY_X0 = 10'd100;
+    localparam [9:0] GAL_X0  = 10'd448;
+    localparam [9:0] BAN_Y0  = 10'd8;
+
+    wire in_tiny_box = (h_count >= TINY_X0) && (h_count < TINY_X0 + 10'd60)
+                    && (v_count >= BAN_Y0)  && (v_count < BAN_Y0 + 10'd20);
+    wire in_gal_box  = (h_count >= GAL_X0)  && (h_count < GAL_X0 + 10'd92)
+                    && (v_count >= BAN_Y0)  && (v_count < BAN_Y0 + 10'd20);
+
+    wire [9:0] tiny_h    = h_count - TINY_X0;
+    wire [9:0] gal_h     = h_count - GAL_X0;
+    wire [9:0] ban_v     = v_count - BAN_Y0;
+    wire [1:0] tiny_idx  = tiny_h[5:4];                  // 0..3
+    wire [2:0] gal_idx   = gal_h[6:4];                   // 0..5
+    wire [3:0] ban_h_in  = in_tiny_box ? tiny_h[3:0] : gal_h[3:0];
+    wire       ban_in_cell  = (ban_h_in < 4'd12);
+    wire [1:0] ban_glyph_col = ban_h_in[3:2];
+    wire [2:0] ban_glyph_row = ban_v[4:2];
+
+    // Letter codes shared by both banners
+    localparam [2:0] LT_T = 3'd0, LT_I = 3'd1, LT_N = 3'd2, LT_Y = 3'd3,
+                     LT_G = 3'd4, LT_A = 3'd5, LT_L = 3'd6, LT_O = 3'd7;
+
+    reg [2:0] cur_letter;
+    always @(*) begin
+        if (in_tiny_box) begin
+            case (tiny_idx)
+                2'd0:    cur_letter = LT_T;
+                2'd1:    cur_letter = LT_I;
+                2'd2:    cur_letter = LT_N;
+                default: cur_letter = LT_Y;
+            endcase
+        end else begin
+            case (gal_idx)                                // GALTON
+                3'd0:    cur_letter = LT_G;
+                3'd1:    cur_letter = LT_A;
+                3'd2:    cur_letter = LT_L;
+                3'd3:    cur_letter = LT_T;
+                3'd4:    cur_letter = LT_O;
+                default: cur_letter = LT_N;
+            endcase
+        end
+    end
+
+    // 3x5 block font for letters (row-major, bit[14]=top-left)
+    reg [14:0] letter_glyph;
+    always @(*) begin
+        case (cur_letter)
+            LT_T:    letter_glyph = 15'b111_010_010_010_010;
+            LT_I:    letter_glyph = 15'b111_010_010_010_111;
+            LT_N:    letter_glyph = 15'b101_111_111_111_101;
+            LT_Y:    letter_glyph = 15'b101_101_010_010_010;
+            LT_G:    letter_glyph = 15'b111_100_101_101_111;
+            LT_A:    letter_glyph = 15'b010_101_111_101_101;
+            LT_L:    letter_glyph = 15'b100_100_100_100_111;
+            default: letter_glyph = 15'b111_101_101_101_111; // O
+        endcase
+    end
+
+    wire [3:0] ban_bit_idx = 4'd14 - {1'b0, ban_glyph_row} * 4'd3
+                                   - {2'b0, ban_glyph_col};
+    wire       ban_pixel   = letter_glyph[ban_bit_idx];
+    wire       is_text     = (in_tiny_box || in_gal_box)
+                          && ban_in_cell && ban_pixel;
+
     // ===============================================================
     //  Color Composition
     // ===============================================================
@@ -387,6 +638,10 @@ module tt_um_pettit_galton
             R <= 2'd0; G <= 2'd0; B <= 2'd0;
         end else if (side_rail || bin_floor) begin
             R <= 2'd1; G <= 2'd1; B <= 2'd1;        // bright frame
+        end else if (is_count) begin
+            R <= 2'd3; G <= 2'd2; B <= 2'd2;        // white counter digits
+        end else if (is_text) begin
+            R <= 2'd3; G <= 2'd3; B <= 2'd0;        // yellow TINY / GALTON
         end else if (is_ball) begin
             R <= 2'd3; G <= 2'd3; B <= 2'd3;        // white ball
         end else if (is_peg) begin
@@ -403,5 +658,6 @@ module tt_um_pettit_galton
     end
 
     wire _unused = &{ena, ui_in, uio_in, 1'b0};
+
 
 endmodule
