@@ -93,27 +93,21 @@ module tt_um_pettit_galton
     // ---------------------------------------------------------------
     reg [16:0] lfsr;
     reg [10:0] lfsr2;
-    reg [3:0] lfsr3;
     wire lfsr_fb = lfsr[16] ^ lfsr[13];
     wire lfsr2_fb = lfsr2[10] ^ lfsr2[8];
-    wire lfsr3_fb = lfsr3[3] ^ lfsr3[2];
     always @(posedge clk) begin
         if (!rst_n) begin
             lfsr <= 17'h12000;
             lfsr2 <= 11'h500;
-            lfsr3 <= 4'hC;
         end else begin
             if (deflect_trigger | ui_in[0])
             begin
-              if (lfsr3[0])
-                lfsr  <= {lfsr[15:0],  lfsr_fb};
-              if (!lfsr3[0])
-                lfsr2  <= {lfsr2[9:0],  lfsr2_fb};
-              lfsr3  <= {lfsr3[2:0],  lfsr3_fb};
+              lfsr  <= {lfsr[15:0],  lfsr_fb};
+              lfsr2  <= {lfsr2[9:0],  lfsr2_fb};
             end
         end
     end
-    wire coin = lfsr3[0] ? lfsr[0] : lfsr2[0];
+    wire coin = lfsr[0] ^ lfsr[6] ^ lfsr2[0];
 
     // ---------------------------------------------------------------
     //  Game State Machine
@@ -366,6 +360,8 @@ module tt_um_pettit_galton
     wire       in_bar_x  = (hbin_x >= 5'd3) && (hbin_x < 5'd29);
     wire       is_bar    = in_pf && in_bar_y && in_bar_x
                         && (hist_for_bin != 5'd0);
+    wire       is_full   = in_pf && in_bar_y && in_bar_x
+                        && (hist_for_bin == 5'd31);
 
     // Faint vertical bin separators below the peg field
     wire bin_sep = in_pf && (v_count >= 10'd410) && (v_count < 10'd476)
@@ -383,6 +379,8 @@ module tt_um_pettit_galton
             R <= 2'd3; G <= 2'd3; B <= 2'd3;        // white ball
         end else if (is_peg) begin
             R <= 2'd2; G <= 2'd2; B <= 2'd3;        // light blue pegs
+        end else if (is_full) begin
+            R <= 2'd3; G <= 2'd3; B <= 2'd0;        // gray bars
         end else if (is_bar) begin
             R <= 2'd2; G <= 2'd2; B <= 2'd2;        // gray bars
         end else if (bin_sep) begin
