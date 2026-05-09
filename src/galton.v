@@ -93,21 +93,29 @@ module tt_um_pettit_galton
     // ---------------------------------------------------------------
     reg [16:0] lfsr;
     reg [10:0] lfsr2;
+    reg [22:0] lfsr3;
+    reg [19:0] lfsr4;
     wire lfsr_fb = lfsr[16] ^ lfsr[13];
     wire lfsr2_fb = lfsr2[10] ^ lfsr2[8];
+    wire lfsr3_fb = lfsr3[22] ^ lfsr3[17];
+    wire lfsr4_fb = lfsr4[19] ^ lfsr4[16];
     always @(posedge clk) begin
         if (!rst_n) begin
             lfsr <= 17'h12000;
             lfsr2 <= 11'h500;
+            lfsr3 <= 23'h420000;
+            lfsr4 <= 20'h90000;
         end else begin
             if (deflect_trigger | ui_in[0])
             begin
               lfsr  <= {lfsr[15:0],  lfsr_fb};
               lfsr2  <= {lfsr2[9:0],  lfsr2_fb};
+              lfsr3  <= {lfsr3[21:0],  lfsr3_fb};
+              lfsr4  <= {lfsr4[18:0],  lfsr4_fb};
             end
         end
     end
-    wire coin = lfsr[0] ^ lfsr[6] ^ lfsr2[0];
+    wire coin = lfsr[0] ^ lfsr3[0] ^ lfsr2[0] ^ lfsr4[0];
 
     // ---------------------------------------------------------------
     //  Game State Machine
@@ -121,28 +129,28 @@ module tt_um_pettit_galton
     reg [9:0]        ball_x_pix;    // pixel x offset from 320 (slides toward slot*16)
     wire [9:0]       ball_x_off;
     reg [3:0]        stage;         // 0..13 pegs hit
+    reg [5:0]        ball_count;    // 0..16
     reg [7:0]        pause_count;
 
-    // 14 histogram bins, 5 bits each (max 16)
-    reg [2:0] hist0,  hist1,  hist11, hist12;
-    reg [3:0] hist2,  hist10;
-    reg [4:0] hist3,  hist4,  hist5,  
-              hist6,  hist7,  hist8,  hist9;
+    // 14 histogram bins, 5 bits each (max 31)
+    reg [2:0] hist0, hist1, hist11, hist12;
+    reg [3:0] hist2, hist10;
+    reg [5:0] hist3, hist4,  hist5,  hist6,
+              hist7, hist8,  hist9;
 
     // bin index from final slot: ball_x_pix - left_edge (96) / 32 (slot size)
     wire [3:0] bin_idx;
     assign ball_x_off = ball_x_pix - 96;
-    assign bin_idx    = ball_x_off[8:5];
+    assign bin_idx    = ball_x_off[8:5]-1;
 
     // current count for the bin the ball is heading into
-    reg  [4:0] cur_hist;
-    wire [4:0] next_hist;
-    assign     next_hist = cur_hist == 5'd31 ? 5'd31 : cur_hist + 5'd1;
+    reg [5:0] cur_hist;
+    wire [5:0] next_hist = cur_hist == 6'd63 ? 6'd63 : cur_hist + 1;
     always @(*) begin
         case (bin_idx)
-            4'd0:  cur_hist = {2'h0, hist0};
-            4'd1:  cur_hist = {2'h0, hist1};
-            4'd2:  cur_hist = {1'b0, hist2};
+            4'd0:  cur_hist = {3'h0, hist0};
+            4'd1:  cur_hist = {3'h0, hist1};
+            4'd2:  cur_hist = {2'h0, hist2};
             4'd3:  cur_hist = hist3;
             4'd4:  cur_hist = hist4;
             4'd5:  cur_hist = hist5;
@@ -150,9 +158,9 @@ module tt_um_pettit_galton
             4'd7:  cur_hist = hist7;
             4'd8:  cur_hist = hist8;
             4'd9:  cur_hist = hist9;
-            4'd10: cur_hist = {1'b0, hist10};
-            4'd11: cur_hist = {2'h0, hist11};
-            default: cur_hist = {2'h0, hist12};
+            4'd10: cur_hist = {2'h0, hist10};
+            4'd11: cur_hist = {3'h0, hist11};
+            default: cur_hist = {3'h0, hist12};
         endcase
     end
 
@@ -183,11 +191,12 @@ module tt_um_pettit_galton
             ball_x_pix  <= 320;
             target_x_pix <= 320;
             stage       <= 0;
+            ball_count  <= 0;
             pause_count <= 0;
             hist0  <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
             hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
             hist8  <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
-            hist12 <= 0;;
+            hist12 <= 0;
         end else if (frame_end) begin
             case (phase)
             PH_FALL: begin
@@ -208,9 +217,9 @@ module tt_um_pettit_galton
                 end else if (land_trigger) begin
                     ball_y <= landing_y;             // snap to landing y
                     case (bin_idx)
-                        4'd0:  hist0  <= next_hist[2:0] | {3{|next_hist[4:3]}};
-                        4'd1:  hist1  <= next_hist[2:0] | {3{|next_hist[4:3]}};
-                        4'd2:  hist2  <= next_hist[3:0] | {4{next_hist[4]}};
+                        4'd0:  hist0  <= next_hist[2:0];
+                        4'd1:  hist1  <= next_hist[2:0];
+                        4'd2:  hist2  <= next_hist[3:0];
                         4'd3:  hist3  <= next_hist;
                         4'd4:  hist4  <= next_hist;
                         4'd5:  hist5  <= next_hist;
@@ -218,15 +227,16 @@ module tt_um_pettit_galton
                         4'd7:  hist7  <= next_hist;
                         4'd8:  hist8  <= next_hist;
                         4'd9:  hist9  <= next_hist;
-                        4'd10: hist10 <= next_hist[3:0] | {4{next_hist[4]}};
-                        4'd11: hist11 <= next_hist[2:0] | {3{|next_hist[4:3]}};
-                        default: hist12 <= next_hist[2:0] | {3{|next_hist[4:3]}};
+                        4'd10: hist10 <= next_hist[3:0];
+                        4'd11: hist11 <= next_hist[2:0];
+                        default: hist12 <= next_hist[2:0];
                     endcase
+                    ball_count  <= ball_count + 6'd1;
                     pause_count <= 0;
-                    phase <= (cur_hist == 5'd31) ? PH_PLONG : PH_PSHRT;
+                    phase <= (cur_hist == 6'd63) ? PH_PLONG : PH_PSHRT;
                 end else begin
                     if (!ui_in[0] || ball_y > 25)
-                    ball_y <= ball_y + 10'd6;        // free fall
+                      ball_y <= ball_y + 10'd6;        // free fall
                 end
             end
 
@@ -248,6 +258,7 @@ module tt_um_pettit_galton
                     ball_x_pix <= 320;
                     target_x_pix <= 320;
                     stage      <= 0;
+                    ball_count <= 0;
                     hist0  <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
                     hist4  <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
                     hist8  <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
@@ -336,32 +347,33 @@ module tt_um_pettit_galton
     wire [3:0] hbin     = hbin_off[8:5];                // 0..13
     wire [4:0] hbin_x   = hbin_off[4:0];                // 0..31
 
-    reg [4:0] hist_for_bin;
+    reg [5:0] hist_for_bin;
     always @(*) begin
         case (hbin)
-            4'd0:  hist_for_bin = hist0;
-            4'd1:  hist_for_bin = hist1;
-            4'd2:  hist_for_bin = hist2;
-            4'd3:  hist_for_bin = hist3;
-            4'd4:  hist_for_bin = hist4;
-            4'd5:  hist_for_bin = hist5;
-            4'd6:  hist_for_bin = hist6;
-            4'd7:  hist_for_bin = hist7;
-            4'd8:  hist_for_bin = hist8;
-            4'd9:  hist_for_bin = hist9;
-            4'd10: hist_for_bin = hist10;
-            4'd11: hist_for_bin = hist11;
-            default: hist_for_bin = hist12;
+            4'd1:  hist_for_bin = {3'h0, hist0};
+            4'd2:  hist_for_bin = {3'h0, hist1};
+            4'd3:  hist_for_bin = {2'h0, hist2};
+            4'd4:  hist_for_bin = hist3;
+            4'd5:  hist_for_bin = hist4;
+            4'd6:  hist_for_bin = hist5;
+            4'd7:  hist_for_bin = hist6;
+            4'd8:  hist_for_bin = hist7;
+            4'd9:  hist_for_bin = hist8;
+            4'd10:  hist_for_bin = hist9;
+            4'd11: hist_for_bin = {2'h0, hist10};
+            4'd12: hist_for_bin = {3'h0, hist11};
+            4'd13: hist_for_bin = {3'h0, hist12};
+            default: hist_for_bin = 0;
         endcase
     end
 
-    wire [9:0] bar_top   = 10'd476 - {4'd0, hist_for_bin, 1'b0};
+    wire [9:0] bar_top   = 10'd476 - {4'd0, hist_for_bin};
     wire       in_bar_y  = (v_count >= bar_top) && (v_count < 10'd476);
     wire       in_bar_x  = (hbin_x >= 5'd3) && (hbin_x < 5'd29);
     wire       is_bar    = in_pf && in_bar_y && in_bar_x
-                        && (hist_for_bin != 5'd0);
-    wire       is_full   = in_pf && in_bar_y && in_bar_x
-                        && (hist_for_bin == 5'd31);
+                        && (hist_for_bin != 6'd0);
+    wire       is_full    = in_pf && in_bar_y && in_bar_x
+                        && (hist_for_bin == 6'd63);
 
     // Faint vertical bin separators below the peg field
     wire bin_sep = in_pf && (v_count >= 10'd410) && (v_count < 10'd476)
@@ -374,13 +386,13 @@ module tt_um_pettit_galton
         if (!video_active) begin
             R <= 2'd0; G <= 2'd0; B <= 2'd0;
         end else if (side_rail || bin_floor) begin
-            R <= 2'd3; G <= 2'd3; B <= 2'd3;        // bright frame
+            R <= 2'd1; G <= 2'd1; B <= 2'd1;        // bright frame
         end else if (is_ball) begin
             R <= 2'd3; G <= 2'd3; B <= 2'd3;        // white ball
         end else if (is_peg) begin
             R <= 2'd2; G <= 2'd2; B <= 2'd3;        // light blue pegs
         end else if (is_full) begin
-            R <= 2'd3; G <= 2'd3; B <= 2'd0;        // gray bars
+            R <= 2'd3; G <= 2'd3; B <= 2'd2;        // Yelow full bar
         end else if (is_bar) begin
             R <= 2'd2; G <= 2'd2; B <= 2'd2;        // gray bars
         end else if (bin_sep) begin
@@ -393,4 +405,3 @@ module tt_um_pettit_galton
     wire _unused = &{ena, ui_in, uio_in, 1'b0};
 
 endmodule
-
