@@ -65,6 +65,7 @@ module tt_um_pettit_galton
     wire video_active = (h_count < 640) && (v_count < 480);
     wire hsync = ~(h_count >= 656 && h_count < 752);
     wire vsync = ~(v_count >= 490 && v_count < 492);
+    wire is_bitmap = h_count > 0 && h_count < 65 && v_count > 0 && v_count < 80;
 
     assign uo_out[7] = hsync;
     assign uo_out[6] = B[0];
@@ -87,20 +88,21 @@ module tt_um_pettit_galton
     // ===============================================================
     // Instantiate the gampad controller
     // ===============================================================
-    wire gamepad_is_present;
-    wire gamepad_b;
-    wire gamepad_y;
-    wire gamepad_select;
-    wire gamepad_start;
-    wire gamepad_up;
-    wire gamepad_down;
-    wire gamepad_left;
-    wire gamepad_right;
-    wire gamepad_a;
-    wire gamepad_x;
-    wire gamepad_l;
-    wire gamepad_r;
+    wire gamepad_is_present = 1'b0;
+    wire gamepad_b = 1'b0;
+    wire gamepad_y = 1'b0;
+    wire gamepad_select = 1'b0;
+    wire gamepad_start = 1'b0;
+    wire gamepad_up = 1'b0;
+    wire gamepad_down = 1'b0;
+    wire gamepad_left = 1'b0;
+    wire gamepad_right = 1'b0;
+    wire gamepad_a = 1'b0;
+    wire gamepad_x = 1'b0;
+    wire gamepad_l = 1'b0;
+    wire gamepad_r = 1'b0;
 
+    /*
     gamepad_pmod_single gamepad
     (
         // Inputs:
@@ -125,6 +127,7 @@ module tt_um_pettit_galton
         .l          ( gamepad_l          ),
         .r          ( gamepad_r          )
     );
+    */
 
     // ===============================================================
     //  Four coprime LFSRs whose outputs are XOR-mixed.
@@ -132,24 +135,25 @@ module tt_um_pettit_galton
     reg [16:0] lfsr;
     reg [10:0] lfsr2;
     reg [22:0] lfsr3;
-    wire lfsr_fb = lfsr[16] ^ lfsr[13];
+//    wire lfsr_fb = lfsr[16] ^ lfsr[13];
     wire lfsr2_fb = lfsr2[10] ^ lfsr2[8];
     wire lfsr3_fb = lfsr3[22] ^ lfsr3[17];
     always @(posedge clk) begin
         if (!rst_n) begin
-            lfsr <= 17'h12000;
+//            lfsr <= 17'h12000;
             lfsr2 <= 11'h500;
             lfsr3 <= 23'h420000;
         end else begin
             if (deflect_trigger | ui_in[0] | gamepad_a | gamepad_left | gamepad_right)
             begin
-              lfsr  <= {lfsr[15:0],  lfsr_fb};
+//              lfsr  <= {lfsr[15:0],  lfsr_fb};
               lfsr2  <= {lfsr2[9:0],  lfsr2_fb};
               lfsr3  <= {lfsr3[21:0],  lfsr3_fb};
             end
         end
     end
-    wire coin = lfsr[0] ^ lfsr3[0] ^ lfsr2[0];
+//    wire coin = lfsr[0] ^ lfsr2[0] ^ lfsr3[0];
+    wire coin = lfsr2[0] ^ lfsr3[0];
 
     // ---------------------------------------------------------------
     //  Game State Machine
@@ -167,6 +171,11 @@ module tt_um_pettit_galton
     reg [2:0]        ball_speed;
     reg              up_p1;
     reg              down_p1;
+    wire [12:0]      rom_addr;
+    wire [1:0]       rom_color;
+    reg  [1:0]       rom_color_r;
+
+    assign rom_addr = {v_count[6:0], h_count[5:0]};
 
     // ---- Pinball-style nudge: left/right gamepad buttons ----------
     // The user can "nudge" the next peg deflection by pressing left or
@@ -175,17 +184,8 @@ module tt_um_pettit_galton
     // deflect_trigger uses the user's choice instead of the random
     // coin.  After any press, a longer lockout (~20 frames) ignores
     // further presses, so holding or mashing the button is useless.
-    localparam [3:0] NUDGE_ARM_FRAMES  = 4'd6;
-    localparam [4:0] NUDGE_LOCK_FRAMES = 5'd20;
-    reg              left_p1;
-    reg              right_p1;
-    reg [3:0]        arm_left;
-    reg [3:0]        arm_right;
-    reg [4:0]        nudge_lockout;
-    wire left_edge   = gamepad_left  & ~left_p1;
-    wire right_edge  = gamepad_right & ~right_p1;
-    wire nudge_left  = (arm_left  != 4'd0) || (left_edge  && nudge_lockout == 5'd0);
-    wire nudge_right = (arm_right != 4'd0) || (right_edge && nudge_lockout == 5'd0);
+    wire nudge_left  = stage < 4'h2 && gamepad_left;
+    wire nudge_right = stage < 4'h2 && gamepad_right;
 
     // Cumulative ball-drop counter, displayed top-right as 3 BCD digits
     // (000..999, wraps).  Increments every time a ball lands in a bin,
@@ -241,7 +241,7 @@ module tt_um_pettit_galton
     // Ball radius 8 + peg radius 3 = 11 px between centres at contact.
     wire [9:0] next_touch_y = 10'd32 + ({6'd0, stage} << 5);   // 40 - 11 + stage*32
 
-    wire at_target = (ball_x_pix == target_x_pix);
+    wire at_target = (ball_x_pix[9:3] == target_x_pix[9:3]);
 
     assign deflect_trigger = (phase == PH_FALL) && (stage < 4'd12)
                            && at_target && (ball_y >= next_touch_y);
@@ -270,36 +270,14 @@ module tt_um_pettit_galton
             ball_speed    <= 3'd6;
             up_p1         <= 0;
             down_p1       <= 0;
-            left_p1       <= 0;
-            right_p1      <= 0;
-            arm_left      <= 0;
-            arm_right     <= 0;
-            nudge_lockout <= 0;
             last_dir      <= 1'b0;
             pitch_idx     <= 4'd0;
             note_toggle   <= 1'b0;
         end else begin
+            rom_color_r <= rom_color;
             if (frame_end) begin
                 up_p1 <= gamepad_up;
                 down_p1 <= gamepad_down;
-                left_p1  <= gamepad_left;
-                right_p1 <= gamepad_right;
-
-                // Decay arm windows and lockout each frame
-                if (arm_left      != 4'd0) arm_left      <= arm_left      - 4'd1;
-                if (arm_right     != 4'd0) arm_right     <= arm_right     - 4'd1;
-                if (nudge_lockout != 5'd0) nudge_lockout <= nudge_lockout - 5'd1;
-
-                // Arm a fresh press if not in lockout (single button at a time)
-                if (nudge_lockout == 5'd0) begin
-                    if (left_edge && !right_edge) begin
-                        arm_left      <= NUDGE_ARM_FRAMES;
-                        nudge_lockout <= NUDGE_LOCK_FRAMES;
-                    end else if (right_edge && !left_edge) begin
-                        arm_right     <= NUDGE_ARM_FRAMES;
-                        nudge_lockout <= NUDGE_LOCK_FRAMES;
-                    end
-                end
 
                 // Make the ball drop faster
                 if (gamepad_up && !up_p1 && ball_speed != 7)
@@ -335,8 +313,6 @@ module tt_um_pettit_galton
                             target_x_pix <= coin ? ball_x_pix + 16
                                                  : ball_x_pix - 16;
                         end
-                        arm_left  <= 4'd0;
-                        arm_right <= 4'd0;
                         // ---- Audio "tink": pick direction, update pitch ----
                         // deflect_dir : 0=left, 1=right (matches coin).
                         // First peg of the ball (stage==0) always starts low.
@@ -397,8 +373,8 @@ module tt_um_pettit_galton
                 end
                 
                 PH_PSHRT: begin
-                    pause_count <= pause_count + 3'd1;
-                    if (pause_count == 3'd3) begin
+                    pause_count <= pause_count + 2'd1;
+                    if (pause_count == 2'd3) begin
                         ball_y       <= 5;
                         ball_x_pix   <= 320;
                         target_x_pix <= 320;
@@ -474,15 +450,13 @@ module tt_um_pettit_galton
     wire peg_in_range = (peg_slot_abs <= {2'd0, nr});
 
     // Filled circle, radius 3 (dx²+dy² ≤ 9)
-    wire [8:0] dx_sq = dx_abs_p * dx_abs_p;
-    wire [8:0] dy_sq = dy_abs_p * dy_abs_p;
     wire is_peg = in_pf && pfy_valid && nr_valid && peg_in_range
-               && ((dx_abs_p + dy_abs_p) <= 10'd2);
+               && ((dx_abs_p + dy_abs_p) <= 6'd2);
 
     // ----------- Active Ball Rendering -----------------------------
     // Ball x = 320 + ball_x_pix  (pixel-accurate, slides between pegs)
     //wire signed [10:0] ball_x_s = 11'sd320 + {ball_x_pix[9], ball_x_pix};
-    wire signed [10:0] ball_x_s = ball_x_pix;
+    wire signed [10:0] ball_x_s = {1'b0, ball_x_pix};
 
     wire signed [10:0] dxb = $signed({1'b0, h_count}) - ball_x_s;
     wire signed [10:0] dyb = $signed({1'b0, v_count}) - $signed({1'b0, ball_y});
@@ -495,9 +469,36 @@ module tt_um_pettit_galton
     wire [9:0] ball_dist_sq = dxb_s*dxb_s + dyb_s*dyb_s;
 
     wire ball_visible = (phase == PH_FALL);
-    wire is_ball = ball_visible && in_pf
-                && (dxb_abs <= 11'd9) && (dyb_abs <= 11'd9)
-                && (ball_dist_sq <= 10'd32);     // radius 8 (diameter 16)
+
+    // 10x10 ball bitmap (replaces multipliers/adder/compare):
+    //         0001111000
+    //         0111111110
+    //         0111111110
+    //         1111111111
+    //         1111111111
+    //         1111111111
+    //         1111111111
+    //         0111111110
+    //         0111111110
+    //         0001111000
+    //
+    // Bitmap is symmetric in both axes. Fold to a 5x5 quarter:
+    //   mx\my  0  1  2  3  4
+    //     0:   1  1  1  1  1
+    //     1:   1  1  1  1  1
+    //     2:   1  1  1  1  0
+    //     3:   1  1  1  1  0
+    //     4:   1  1  0  0  0
+    //
+    // Mirror coords for even-size sprite (dx -5..+4 → mx 0..4)
+    wire [3:0] ball_mx = dxb[10] ? (dxb_abs[3:0] - 4'd1) : dxb_abs[3:0];
+    wire [3:0] ball_my = dyb[10] ? (dyb_abs[3:0] - 4'd1) : dyb_abs[3:0];
+    wire ball_in_bbox = (dxb[10] ? (dxb_abs <= 11'd5) : (dxb_abs <= 11'd4))
+                     && (dyb[10] ? (dyb_abs <= 11'd5) : (dyb_abs <= 11'd4));
+    wire ball_shape = (ball_my <= 4'd1)
+                   || ((ball_my <= 4'd3) && (ball_mx <= 4'd3))
+                   || ((ball_my == 4'd4) && (ball_mx <= 4'd1));
+    wire is_ball = ball_visible && in_pf && ball_in_bbox && ball_shape;
 
     // ----------- Histogram Bars ------------------------------------
     wire [9:0] hbin_off = h_count - 10'd80;             // 0..447
@@ -649,11 +650,21 @@ module tt_um_pettit_galton
         endcase
     end
 
-   wire [3:0] ban_row3    = {ban_glyph_row, 1'b0} + {1'b0, ban_glyph_row};
+    wire [3:0] ban_row3    = {ban_glyph_row, 1'b0} + {1'b0, ban_glyph_row};
     wire [3:0] ban_bit_idx = 4'd14 - ban_row3 - {2'b0, ban_glyph_col};
     wire       ban_pixel   = letter_glyph[ban_bit_idx];
     wire       is_text     = (in_tiny_box || in_gal_box)
                           && ban_in_cell && ban_pixel;
+
+    // ===============================================================
+    // Instantiate the Galton bitmap
+    // ===============================================================
+    galton_rom rom1
+    (
+        .addr ( rom_addr  ),
+        .out  ( rom_color )
+    );
+
 
     // ===============================================================
     //  Color Composition
@@ -661,6 +672,8 @@ module tt_um_pettit_galton
     always @(posedge clk) begin
         if (!video_active) begin
             R <= 2'd0; G <= 2'd0; B <= 2'd0;
+        end else if (is_bitmap) begin
+            R <= rom_color_r; G <= rom_color_r; B <= rom_color_r; // Bitmap data
         end else if (side_rail || bin_floor) begin
             R <= 2'd1; G <= 2'd1; B <= 2'd1;        // bright frame
         end else if (is_count) begin
@@ -731,7 +744,7 @@ module tt_um_pettit_galton
             4'd10: sin_q = 5'd26;
             4'd11: sin_q = 5'd28;
             4'd12: sin_q = 5'd29;
-            4'd13: sin_q = 50;
+            4'd13: sin_q = 5'd30;
             4'd14: sin_q = 5'd31;
             default: sin_q = 5'd31;
         endcase

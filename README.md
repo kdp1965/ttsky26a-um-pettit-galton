@@ -11,7 +11,6 @@
 ## External hardware
 
 VGA Pmod.
-Optional Gamepad PMOD
 Optional Audio PMOD (output is on uio_out[7]
 
 ## Demo in action

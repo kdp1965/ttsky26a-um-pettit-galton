@@ -18,7 +18,7 @@ project:
   # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
   source_files:
     - "galton.v"
-    - "gamepad_pmod.v"
+    - "galton_rom.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
@@ -28,9 +28,9 @@ pinout:
   ui[1]: ""
   ui[2]: ""
   ui[3]: ""
-  ui[4]: "Gamepad LATCH"
-  ui[5]: "Gamepad CLOCK"
-  ui[6]: "Gamepad DATA"
+  ui[4]: ""
+  ui[5]: ""
+  ui[6]: ""
   ui[7]: ""
 
   # Outputs
