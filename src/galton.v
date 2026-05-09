@@ -494,7 +494,7 @@ module tt_um_pettit_galton
     wire signed [10:0] dxb = $signed({1'b0, h_count}) - ball_x_s;
     wire signed [10:0] dyb = $signed({1'b0, v_count}) - $signed({1'b0, ball_y});
     wire        [10:0] dxb_abs = dxb[10] ? (~dxb + 11'sd1) : dxb;
-    wire        [10:0] dyb_abs = dyb ? (~dyb + 11'sd1) : dyb;
+    wire        [10:0] dyb_abs = dyb[10] ? (~dyb + 11'sd1) : dyb;
 
     // Clip to small to avoid huge multipliers
     wire [4:0] dxb_s = (dxb_abs > 11'd10) ? 5'd10 : dxb_abs[4:0];
@@ -585,9 +585,10 @@ module tt_um_pettit_galton
             4'd15:   glyph = 15'b000_000_000_000_000;
             default: glyph = 15'b0;
         endcase
-   
-    wire [3:0] bit_idx     = 4'd14 - {1'b0, glyph_row} * 4'd3
-                                   - {2'b0, glyph_col};
+    end
+
+    wire [3:0] glyph_row3 = {glyph_row, 1'b0} + {1'b0, glyph_row};  // row*3
+    wire [3:0] bit_idx     = 4'd14 - glyph_row3 - {2'b0, glyph_col};
     wire       glyph_pixel = glyph[bit_idx];
     wire       is_count    = in_cnt_box && in_cell && glyph_pixel;
 
@@ -609,7 +610,7 @@ module tt_um_pettit_galton
     wire [9:0] gal_h     = h_count - GAL_X0;
     wire [9:0] ban_v     = v_count - BAN_Y0;
     wire [1:0] tiny_idx  = tiny_h[5:4];                  // 0..3
-    wire [2:0] gal_idx   = gal_h[6:4];                   // 0..5
+    wire [2:0] gal_idx   = gal_h[6:4];                 // 0..5
     wire [3:0] ban_h_in  = in_tiny_box ? tiny_h[3:0] : gal_h[3:0];
     wire       ban_in_cell  = (ban_h_in < 4'd12);
     wire [1:0] ban_glyph_col = ban_h_in[3:2];
@@ -655,8 +656,8 @@ module tt_um_pettit_galton
         endcase
     end
 
-    wire [3:0] ban_bit_idx = 4'd14 - {1'b0, ban_glyph_row} * 4'd3
-                                   - {2'b0, ban_glyph_col};
+    wire [3:0] ban_row3    = {ban_glyph_row, 1'b0} + {1'b0, ban_glyph_row};
+    wire [3:0] ban_bit_idx = 4'd14 - ban_row3 - {2'b0, ban_glyph_col};
     wire       ban_pixel   = letter_glyph[ban_bit_idx];
     wire       is_text     = (in_tiny_box || in_gal_box)
                           && ban_in_cell && ban_pixel;
@@ -666,7 +667,7 @@ module tt_um_pettit_galton
     // ===============================================================
     always @(posedge clk) begin
         if (!video_active) begin
-            R <= 2'd0; G <= 2'd0; B;
+            R <= 2'd0; G <= 2'd0; B <= 2'd0;
         end else if (side_rail || bin_floor) begin
             R <= 2'd1; G <= 2'd1; B <= 2'd1;        // bright frame
         end else if (is_count) begin
@@ -692,7 +693,7 @@ module tt_um_pettit_galton
     //  Audio "tink" synthesis (PWM on uio[7])
     // ===============================================================
     //  - Phase accumulator at 25.175 MHz, 24-bit.
-    //  - Phase increment  = 256 + (pitch_idx<<5)  →  ~382..1145 Hz
+    //  - Phase increment  = 256 +_idx<<5)  →  ~382..1145 Hz
     //  - 6-bit quarter-sine LUT, mirror-extended to a 64-step sine.
     //  - Exponential envelope, retriggered to 0xFF on each peg hit
     //    (note_toggle edge), then env -= (env>>6)+1 every 4096 clocks.
@@ -755,7 +756,8 @@ module tt_um_pettit_galton
         end else if (new_note_pulse) begin
             env      <= 8'hFF;
             env_tick <= 14'd0;
-        end else b          env_tick <= env_tick + 14'd1;
+        end else begin
+            env_tick <= env_tick + 14'd1;
             if (env_tick == 14'h3FFF && env != 8'd0)
                 env <= env - {6'd0, env[7:6]} - 8'd1;
         end
