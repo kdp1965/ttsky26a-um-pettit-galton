@@ -76,8 +76,11 @@ module tt_um_pettit_galton
     assign uo_out[1] = G[1];
     assign uo_out[0] = R[1];
 
-    assign uio_out = 8'b0;
-    assign uio_oe  = 8'b0;
+    // uio_out[7] is audio PWM (driven by the audio block at the bottom).
+    // All other uio bits are unused outputs.
+    wire pwm_out;
+    assign uio_out = {pwm_out, 7'b0};
+    assign uio_oe  = 8'b1000_0000;
 
     wire frame_end = (h_count == 799) && (v_count == 524);
     wire deflect_trigger;
@@ -195,6 +198,16 @@ module tt_um_pettit_galton
     // and is NOT cleared when the histogram is reset between cycles.
     reg [11:0]       drop_bcd;      // {hundreds, tens, units}
 
+    // ---- Audio "tink" state -----------------------------------------
+    //   - last_dir : direction of previous deflection (0=L, 1=R)
+    //   - pitch_idx: 0..15, increments when ball continues same dir,
+    //                resets to 0 on direction change OR new ball.
+    //   - note_toggle: flipped on every peg hit.  Edge-detected in the
+    //                  pixel-clock audio block to (re)trigger envelope.
+    reg              last_dir;
+    reg [3:0]        pitch_idx;
+    reg              note_toggle;
+
     // 14 histogram bins, 5 bits each (max 31)
     reg [2:0] hist0, hist1, hist11, hist12;
     reg [3:0] hist2, hist10;
@@ -269,6 +282,9 @@ module tt_um_pettit_galton
             arm_left      <= 0;
             arm_right     <= 0;
             nudge_lockout <= 0;
+            last_dir      <= 1'b0;
+            pitch_idx     <= 4'd0;
+            note_toggle   <= 1'b0;
         end else begin
             if (frame_end) begin
                 up_p1 <= gamepad_up;
@@ -328,6 +344,22 @@ module tt_um_pettit_galton
                         end
                         arm_left  <= 4'd0;
                         arm_right <= 4'd0;
+                        // ---- Audio "tink": pick direction, update pitch ----
+                        // deflect_dir : 0=left, 1=right (matches coin).
+                        // First peg of the ball (stage==0) always starts low.
+                        // Otherwise: same dir → pitch up (sat), else → reset.
+                        note_toggle <= ~note_toggle;
+                        last_dir    <= nudge_left  ? 1'b0 :
+                                       nudge_right ? 1'b1 : coin;
+                        if (stage == 4'd0) begin
+                            pitch_idx <= 4'd0;
+                        end else if ((nudge_left  ? 1'b0 :
+                                      nudge_right ? 1'b1 : coin) == last_dir) begin
+                            if (pitch_idx != 4'hF)
+                                pitch_idx <= pitch_idx + 4'd1;
+                        end else begin
+                            pitch_idx <= 4'd0;
+                        end
                     end else if (land_trigger) begin
                         ball_y <= landing_y;             // snap to landing y
                         case (bin_idx)
@@ -462,7 +494,7 @@ module tt_um_pettit_galton
     wire signed [10:0] dxb = $signed({1'b0, h_count}) - ball_x_s;
     wire signed [10:0] dyb = $signed({1'b0, v_count}) - $signed({1'b0, ball_y});
     wire        [10:0] dxb_abs = dxb[10] ? (~dxb + 11'sd1) : dxb;
-    wire        [10:0] dyb_abs = dyb[10] ? (~dyb + 11'sd1) : dyb;
+    wire        [10:0] dyb_abs = dyb ? (~dyb + 11'sd1) : dyb;
 
     // Clip to small to avoid huge multipliers
     wire [4:0] dxb_s = (dxb_abs > 11'd10) ? 5'd10 : dxb_abs[4:0];
@@ -553,8 +585,7 @@ module tt_um_pettit_galton
             4'd15:   glyph = 15'b000_000_000_000_000;
             default: glyph = 15'b0;
         endcase
-    end
-
+   
     wire [3:0] bit_idx     = 4'd14 - {1'b0, glyph_row} * 4'd3
                                    - {2'b0, glyph_col};
     wire       glyph_pixel = glyph[bit_idx];
@@ -635,7 +666,7 @@ module tt_um_pettit_galton
     // ===============================================================
     always @(posedge clk) begin
         if (!video_active) begin
-            R <= 2'd0; G <= 2'd0; B <= 2'd0;
+            R <= 2'd0; G <= 2'd0; B;
         end else if (side_rail || bin_floor) begin
             R <= 2'd1; G <= 2'd1; B <= 2'd1;        // bright frame
         end else if (is_count) begin
@@ -656,6 +687,100 @@ module tt_um_pettit_galton
             R <= 2'd0; G <= 2'd0; B <= 2'd0;
         end
     end
+
+    // ===============================================================
+    //  Audio "tink" synthesis (PWM on uio[7])
+    // ===============================================================
+    //  - Phase accumulator at 25.175 MHz, 24-bit.
+    //  - Phase increment  = 256 + (pitch_idx<<5)  →  ~382..1145 Hz
+    //  - 6-bit quarter-sine LUT, mirror-extended to a 64-step sine.
+    //  - Exponential envelope, retriggered to 0xFF on each peg hit
+    //    (note_toggle edge), then env -= (env>>6)+1 every 4096 clocks.
+    //  - 6-bit PWM at 25.175MHz/64 ≈ 393 kHz (above the PMOD's 200 kHz
+    //    recommendation), centred at 32 so silence is 50% duty cycle.
+    // ---------------------------------------------------------------
+
+    // Cross from frame-domain note_toggle to a 1-cycle pulse
+    reg note_toggle_d;
+    wire new_note_pulse = note_toggle ^ note_toggle_d;
+    always @(posedge clk) begin
+        if (!rst_n) note_toggle_d <= 1'b0;
+        else        note_toggle_d <= note_toggle;
+    end
+
+    // Phase accumulator
+    wire [9:0] phase_inc = 10'd256 + ({6'd0, pitch_idx} << 5);
+    reg [23:0] phase_acc;
+    always @(posedge clk) begin
+        if (!rst_n) phase_acc <= 24'd0;
+        else        phase_acc <= phase_acc + {14'd0, phase_inc};
+    end
+
+    // Sine: top 6 bits of phase index a 64-step sine
+    wire [1:0] quadrant = phase_acc[23:22];
+    wire [3:0] qphase   = phase_acc[21:18];
+    wire [3:0] sin_idx  = quadrant[0] ? (4'd15 - qphase) : qphase;
+
+    reg [4:0] sin_q;     // quarter-wave magnitude, 0..31
+    always @(*) begin
+        case (sin_idx)
+            4'd0:  sin_q = 5'd0;
+            4'd1:  sin_q = 5'd3;
+            4'd2:  sin_q = 5'd6;
+            4'd3:  sin_q = 5'd9;
+            4'd4:  sin_q = 5'd12;
+            4'd5:  sin_q = 5'd15;
+            4'd6:  sin_q = 5'd18;
+            4'd7:  sin_q = 5'd20;
+            4'd8:  sin_q = 5'd22;
+            4'd9:  sin_q = 5'd24;
+            4'd10: sin_q = 5'd26;
+            4'd11: sin_q = 5'd28;
+            4'd12: sin_q = 5'd29;
+            4'd13: sin_q = 5'd30;
+            4'd14: sin_q = 5'd31;
+            default: sin_q = 5'd31;
+        endcase
+    end
+    wire signed [6:0] sine = quadrant[1] ? -$signed({2'b00, sin_q})
+                                         :  $signed({2'b00, sin_q});
+
+    // Exponential envelope (retrigger on each peg hit)
+    reg [13:0] env_tick;
+    reg [7:0]  env;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            env_tick <= 14'd0;
+            env      <= 8'd0;
+        end else if (new_note_pulse) begin
+            env      <= 8'hFF;
+            env_tick <= 14'd0;
+        end else b          env_tick <= env_tick + 14'd1;
+            if (env_tick == 14'h3FFF && env != 8'd0)
+                env <= env - {6'd0, env[7:6]} - 8'd1;
+        end
+    end
+
+    // sine [-31..+31] * env [0..255] → [-7905..+7905] (signed 14b),
+    // shift right 8 → [-30..+30], add 32 → unsigned 6-bit PWM level.
+    wire signed [14:0] mod_s    = sine * $signed({1'b0, env});
+    wire signed [6:0]  sample_s = mod_s[14:8];
+    wire signed [7:0]  pwm_s    = $signed(8'd32) + {sample_s[6], sample_s};
+    wire [5:0] pwm_lvl = pwm_s[5:0];
+
+    // 6-bit PWM
+    reg [5:0] pwm_cnt;
+    reg       pwm_out_r;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            pwm_cnt   <= 6'd0;
+            pwm_out_r <= 1'b0;
+        end else begin
+            pwm_cnt   <= pwm_cnt + 6'd1;
+            pwm_out_r <= (pwm_cnt < pwm_lvl);
+        end
+    end
+    assign pwm_out = pwm_out_r;
 
     wire _unused = &{ena, ui_in, uio_in, 1'b0};
 
