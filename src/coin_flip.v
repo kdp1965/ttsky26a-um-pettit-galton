@@ -16,22 +16,22 @@ module coin_flip
     // ===============================================================
     //  Three coprime LFSRs whose outputs are XOR-mixed.
     // ===============================================================
-    reg [16:0] lfsr;
+    reg [9:0]  lfsr;
     reg [10:0] lfsr2;
     reg [22:0] lfsr3;
-    wire lfsr_fb  = lfsr[16]  ^ lfsr[13];
+    wire lfsr_fb  = lfsr[9]  ^ lfsr[6];
     wire lfsr2_fb = lfsr2[10] ^ lfsr2[8];
     wire lfsr3_fb = lfsr3[22] ^ lfsr3[17];
 
     always @(posedge clk) begin
         if (!rst_n) begin
-            lfsr  <= 17'h12000;
+            lfsr  <= 10'h240;
             lfsr2 <= 11'h500;
             lfsr3 <= 23'h420000;
         end else begin
             if (flip)
             begin
-              lfsr  <= {lfsr[15:0],  lfsr_fb};
+              lfsr  <= {lfsr[8:0],  lfsr_fb};
               lfsr2 <= {lfsr2[9:0],  lfsr2_fb};
               lfsr3 <= {lfsr3[21:0],  lfsr3_fb};
             end
