@@ -10,8 +10,6 @@ module coin_flip
    input  wire       clk,
    input  wire       rst_n,
    input  wire       flip,
-   input  wire       randomize1,
-   input  wire       randomize2,
    output wire       coin
 );
 
@@ -34,10 +32,8 @@ module coin_flip
             if (flip)
             begin
               lfsr  <= {lfsr[15:0],  lfsr_fb};
-              if (!randomize1)
-                  lfsr2 <= {lfsr2[9:0],  lfsr2_fb};
-              if (!randomize2)
-                  lfsr3 <= {lfsr3[21:0],  lfsr3_fb};
+              lfsr2 <= {lfsr2[9:0],  lfsr2_fb};
+              lfsr3 <= {lfsr3[21:0],  lfsr3_fb};
             end
         end
     end

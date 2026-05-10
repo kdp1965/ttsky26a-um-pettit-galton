@@ -85,7 +85,7 @@ module tt_um_pettit_galton
     // All other uio bits are unused outputs.
     wire pwm_out;
     reg  audio_off;
-    assign uio_out = {pwm_out & !audio_off, 7'b0};
+    assign uio_out = {pwm_out, 7'b0};
     assign uio_oe  = 8'b1000_0000;
 
     wire deflect_trigger;
@@ -137,13 +137,14 @@ module tt_um_pettit_galton
     // ===============================================================
     wire    coin;
     wire    flip = deflect_trigger | ui_in[0] | gamepad_a | gamepad_left | gamepad_right;
+    reg  far_out;
+    reg  far_out_p0;
+    reg  far_out_p1;
     coin_flip coin_flip_i
     (
         .clk        ( clk       ),
         .rst_n      ( rst_n     ),
-        .flip       ( flip      ),
-        .randomize1 ( gamepad_l ),
-        .randomize2 ( 1'b0      ),
+        .flip       ( flip &!far_out     ),
         .coin       ( coin      )
     );
 
@@ -271,8 +272,8 @@ module tt_um_pettit_galton
             last_dir      <= 1'b0;
             pitch_idx     <= 4'd0;
             note_toggle   <= 1'b0;
-            audio_off     <= 1'b0;
-            audio_ctrl_p1 <= 1'b0;
+            far_out_p1    <= 1'b0;
+            far_out       <= 1'b0;
             show_histogram <= 1'b0;
             b_p1          <= 1'b0;
             scale_bits    <= 3'h0;
@@ -299,10 +300,10 @@ module tt_um_pettit_galton
                               hist_b6 ? 3'h3 : hist_b5 ? 3'h4 : hist_b4 ? 3'h5 : 3'h6;
             end
 
-            // Audio on/off control
-            audio_ctrl_p1 <= gamepad_x | ui_in[7];
-            if ((gamepad_x | ui_in[7]) & !audio_ctrl_p1)
-               audio_off <= ~audio_off;
+            // Far Out (put ball in outer bin)
+            far_out_p0 <= gamepad_x | ui_in[7];
+            if ((gamepad_x | ui_in[7]) & !far_out_p0)
+                far_out_p1 <= 1'b1;
 
             // Process ball drop based on speed and frame position
             if ((frame_end || half_frame || quarter_frame || insane) && !show_histogram) begin
@@ -378,6 +379,7 @@ module tt_um_pettit_galton
                             default: hist12 <= next_hist[6:0];
                         endcase
                         pause_count <= 0;
+                        far_out <= 1'b0;
                         phase <= (cur_hist == 10'h3be) ? PH_PLONG : PH_PSHRT;
                         ball_y <= (cur_hist == 10'h3be) ? 0 : landing_y;             // snap to landing y
 
@@ -414,6 +416,9 @@ module tt_um_pettit_galton
                 PH_PSHRT: begin
                     // Short Pause
                     pause_count <= pause_count + 2'd1;
+                    if (far_out_p1)
+                        far_out <= 1'b1;
+                    far_out_p1 <= 1'b0;
                     if (pause_count == 2'd3 || ball_speed > 4'd9) begin
                         ball_y       <= 5;
                         ball_x   <= 320;
