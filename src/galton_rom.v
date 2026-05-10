@@ -3043,7 +3043,6 @@ always @(*) begin
         13'd7189 : out = 2'd1;
         13'd7190 : out = 2'd1;
         13'd7191 : out = 2'd1;
-/*
         13'd7200 : out = 2'd1;
         13'd7201 : out = 2'd1;
         13'd7202 : out = 2'd1;
@@ -3860,7 +3859,6 @@ always @(*) begin
         13'd8097 : out = 2'd1;
         13'd8098 : out = 2'd1;
         13'd8099 : out = 2'd1;
-*/
         default: out = 2'd0;
     endcase
 end
