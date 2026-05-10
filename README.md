@@ -21,46 +21,47 @@ Optional Audio PMOD (output is on uio_out[7]
 
 The Tiny Galton demo uses 3 different length Linear Feedback Shift Registers (LFSRs) to generate "randomness" in 
 deciding which way the ball will bounce as it hits a peg on the playing field.  Typical Galton Boards follow a
-bell curve distribution where the balls will land.  Since this demo only collects balls up until any one bin reaches
-a count of 63, it is difficult to see a full bell curve (the outer-most bins are only expected to receive a ball
-drop once out of every 4096 balls).
+bell curve distribution where the balls will land.  This demo will collect until any bin reaches a ball count of 0x3BE
+(958 decimal), so a full bell curve will be visible.  However this will collect maybe 4200-4300 ball drops, so 
+the outer bins may or may not receive any.  
 
-To proove randomness in the LFSR mechanis, a C program simulating the ball-drop and LFSR calculations is included. 
-It can be compiled as:
+To proove randomness in the LFSR mechanism and that the outer bins are achievable, a C program simulating the ball-drop and LFSR
+calculations is included.  It can be compiled as:
 
    gcc -o galton_lfsr_sim galton_lfsr_sim.c
 
 A sample run simulating 100K ball drops is shown below in both table and bar chart format:
 
-Balls simulated: 100000
+Balls simulated: 1000000
 
  |bin |   actual  |  expected | act/exp|
  |----|-----------|-----------|--------|
- |  0 |        28 |      24.4 |  1.147 |
- |  1 |       318 |     293.0 |  1.085 |
- |  2 |      1641 |    1611.3 |  1.018 |
- |  3 |      5301 |    5371.1 |  0.987 |
- |  4 |     11967 |   12085.0 |  0.990 |
- |  5 |     19282 |   19335.9 |  0.997 |
- |  6 |     22594 |   22558.6 |  1.002 |
- |  7 |     19596 |   19335.9 |  1.013 |
- |  8 |     11905 |   12085.0 |  0.985 |
- |  9 |      5405 |    5371.1 |  1.006 |
- | 10 |      1631 |    1611.3 |  1.012 |
- | 11 |       306 |     293.0 |  1.044 |
- | 12 |        26 |      24.4 |  1.065 |
+ |  0 |       242 |     244.1 |  0.991 |
+ |  1 |      3018 |    2929.7 |  1.030 |
+ |  2 |     16457 |   16113.3 |  1.021 |
+ |  3 |     53717 |   53710.9 |  1.000 |
+ |  4 |    121249 |  120849.6 |  1.003 |
+ |  5 |    193259 |  193359.4 |  0.999 |
+ |  6 |    225236 |  225585.9 |  0.998 |
+ |  7 |    193345 |  193359.4 |  1.000 |
+ |  8 |    120904 |  120849.6 |  1.000 |
+ |  9 |     53487 |   53710.9 |  0.996 |
+ | 10 |     15934 |   16113.3 |  0.989 |
+ | 11 |      2926 |    2929.7 |  0.999 |
+ | 12 |       226 |     244.1 |  0.926 |
 
 Outer-bin summary:
- - bin  0 (12 lefts):  28 hits   (first at ball #5986)
- - bin 12 (12 rights): 26 hits   (first at ball #9805)
+  bin  0 (12 lefts):  242 hits   (first at ball #4152)
+  bin 12 (12 rights): 226 hits   (first at ball #954)
 
-Histogram (max bin = 22594):
+Final LFSR state: l1=0x1e l2=0x120 l3=0x2575
 
+Histogram (max bin = 225236):
                              ███
                              ███
                              ███
                              ███
-                         ▅▅▅ ███ ███
+                         ▆▆▆ ███ ▆▆▆
                          ███ ███ ███
                          ███ ███ ███
                          ███ ███ ███
@@ -69,8 +70,7 @@ Histogram (max bin = 22594):
                          ███ ███ ███
                          ███ ███ ███
                          ███ ███ ███
-                         ███ ███ ███
-                     ▇▇▇ ███ ███ ███ ▆▆▆
+                     ▁▁▁ ███ ███ ███ ▁▁▁
                      ███ ███ ███ ███ ███
                      ███ ███ ███ ███ ███
                      ███ ███ ███ ███ ███
@@ -78,15 +78,15 @@ Histogram (max bin = 22594):
                      ███ ███ ███ ███ ███
                      ███ ███ ███ ███ ███
                      ███ ███ ███ ███ ███
-                     ███ ███ ███ ███ ███ ▁▁▁
+                     ███ ███ ███ ███ ███
+                 ▁▁▁ ███ ███ ███ ███ ███ ▁▁▁
                  ███ ███ ███ ███ ███ ███ ███
                  ███ ███ ███ ███ ███ ███ ███
                  ███ ███ ███ ███ ███ ███ ███
                  ███ ███ ███ ███ ███ ███ ███
-             ▁▁▁ ███ ███ ███ ███ ███ ███ ███ ▁▁▁
+             ▂▂▂ ███ ███ ███ ███ ███ ███ ███ ▁▁▁
              ███ ███ ███ ███ ███ ███ ███ ███ ███
-     ___ ▃▃▃ ███ ███ ███ ███ ███ ███ ███ ███ ███ ▃▃▃ ___ 
+     ___ ▃▃▃ ███ ███ ███ ███ ███ ███ ███ ███ ███ ▃▃▃ ___
      ----------------------------------------------------
      00  01  02  03  04  05  06  07  08  09  10  11  12
-
 

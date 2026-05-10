@@ -84,8 +84,7 @@ module tt_um_pettit_galton
     // uio_out[7] is audio PWM (driven by the audio block at the bottom).
     // All other uio bits are unused outputs.
     wire pwm_out;
-    reg  audio_off;
-    assign uio_out = {pwm_out & !audio_off, 7'b0};
+    assign uio_out = {pwm_out, 7'b0};
     assign uio_oe  = 8'b1000_0000;
 
     wire deflect_trigger;
@@ -136,16 +135,17 @@ module tt_um_pettit_galton
     //  Three coprime LFSRs whose outputs are XOR-mixed.
     // ===============================================================
     wire    coin;
-    wire    flip = deflect_trigger | ui_in[0] | gamepad_a | gamepad_left | gamepad_right;
-    reg  far_out;
-    reg  far_out_p0;
-    reg  far_out_p1;
+    wire    flip;
+    reg     far_out;
+    reg     far_out_p0;
+    reg     far_out_p1;
+
     coin_flip coin_flip_i
     (
-        .clk        ( clk       ),
-        .rst_n      ( rst_n     ),
+        .clk        ( clk                ),
+        .rst_n      ( rst_n              ),
         .flip       ( flip &!far_out     ),
-        .coin       ( coin      )
+        .coin       ( coin               )
     );
 
     // ===============================================================
@@ -175,6 +175,8 @@ module tt_um_pettit_galton
     wire nudge_left  = stage < 4'h2 && gamepad_left;
     wire nudge_right = stage < 4'h2 && gamepad_right;
 
+    assign flip = (phase == PH_PSHRT) | deflect_trigger | ui_in[0] | gamepad_a | gamepad_left | gamepad_right;
+
     // Cumulative ball-drop counter, displayed top-right as 4 BCD digits
     // (0000..9999, wraps).  Increments every time a ball lands in a bin,
     // and is NOT cleared when the histogram is reset between cycles.
@@ -189,7 +191,6 @@ module tt_um_pettit_galton
     reg              last_dir;
     reg [3:0]        pitch_idx;
     reg              note_toggle;
-    reg              audio_ctrl_p1;
 
     // ---- Scaled histogram display (gamepad B toggle) ----------------
     reg              show_histogram;
@@ -272,8 +273,6 @@ module tt_um_pettit_galton
             last_dir      <= 1'b0;
             pitch_idx     <= 4'd0;
             note_toggle   <= 1'b0;
-            audio_off     <= 1'b0;
-            audio_ctrl_p1 <= 1'b0;
             far_out_p1    <= 1'b0;
             far_out       <= 1'b0;
             show_histogram <= 1'b0;
@@ -301,10 +300,6 @@ module tt_um_pettit_galton
                 scale_bits <= hist_b9 ? 3'h0 : hist_b8 ? 3'h1 : hist_b7 ? 3'h2 :
                               hist_b6 ? 3'h3 : hist_b5 ? 3'h4 : hist_b4 ? 3'h5 : 3'h6;
             end
-
-            audio_ctrl_p1 <= gamepad_y;
-            if (gamepad_y & !audio_ctrl_p1)
-               audio_off <= ~audio_off;
 
             // Far Out (put ball in outer bin)
             far_out_p0 <= gamepad_x | ui_in[7];
@@ -422,15 +417,15 @@ module tt_um_pettit_galton
                 PH_PSHRT: begin
                     // Short Pause
                     pause_count <= pause_count + 2'd1;
-                    if (far_out_p1)
-                        far_out <= 1'b1;
-                    far_out_p1 <= 1'b0;
                     if (pause_count == 2'd3 || ball_speed > 4'd9) begin
                         ball_y       <= 5;
                         ball_x   <= 320;
                         target_x_pix <= 320;
                         stage        <= 0;
                         phase        <= PH_FALL;
+                        if (far_out_p1)
+                            far_out <= 1'b1;
+                        far_out_p1 <= 1'b0;
                     end
                 end
                 
