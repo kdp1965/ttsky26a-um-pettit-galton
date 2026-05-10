@@ -175,7 +175,7 @@ module tt_um_pettit_galton
     wire nudge_left  = stage < 4'h2 && gamepad_left;
     wire nudge_right = stage < 4'h2 && gamepad_right;
 
-    assign flip = (phase == PH_PSHRT) | deflect_trigger | ui_in[0] | gamepad_a | gamepad_left | gamepad_right;
+    assign flip = gamepad_x | deflect_trigger | ui_in[0] | gamepad_a | gamepad_left | gamepad_right;
 
     // Cumulative ball-drop counter, displayed top-right as 4 BCD digits
     // (0000..9999, wraps).  Increments every time a ball lands in a bin,
