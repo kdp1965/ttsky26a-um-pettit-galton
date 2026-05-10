@@ -67,6 +67,10 @@ module tt_um_pettit_galton
     wire vsync = ~(v_count >= 490 && v_count < 492);
     wire is_bitmap = h_count > 0 && h_count < 91 && v_count > 0 && v_count < 92;
     wire is_namemap = h_count > 0 && h_count < 91 && v_count > 93 && v_count < 133;
+    reg  half_frame;
+    reg  quarter_frame;
+    reg  insane;
+    reg  frame_end;
 
     assign uo_out[7] = hsync;
     assign uo_out[6] = B[0];
@@ -80,10 +84,10 @@ module tt_um_pettit_galton
     // uio_out[7] is audio PWM (driven by the audio block at the bottom).
     // All other uio bits are unused outputs.
     wire pwm_out;
-    assign uio_out = {pwm_out, 7'b0};
+    reg  audio_off;
+    assign uio_out = {pwm_out & !audio_off, 7'b0};
     assign uio_oe  = 8'b1000_0000;
 
-    wire frame_end = (h_count == 799) && (v_count == 524);
     wire deflect_trigger;
 
     // ===============================================================
@@ -135,10 +139,12 @@ module tt_um_pettit_galton
     wire    flip = deflect_trigger | ui_in[0] | gamepad_a | gamepad_left | gamepad_right;
     coin_flip coin_flip_i
     (
-        .clk   ( clk   ),
-        .rst_n ( rst_n ),
-        .flip  ( flip  ),
-        .coin  ( coin  )
+        .clk        ( clk       ),
+        .rst_n      ( rst_n     ),
+        .flip       ( flip      ),
+        .randomize1 ( gamepad_l ),
+        .randomize2 ( gamepad_r ),
+        .coin       ( coin      )
     );
 
     // ===============================================================
@@ -150,13 +156,13 @@ module tt_um_pettit_galton
 
     reg [1:0]        phase;
     reg [9:0]        ball_y;
-    reg [9:0]        ball_x_pix;    // pixel x offset from 320 (slides toward slot*16)
+    reg [9:0]        ball_x;
     wire [9:0]       ball_x_off;
-    reg [3:0]        stage;         // 0..13 pegs hit
+    reg [3:0]        stage;         // 0..12 pegs hit
     reg [1:0]        pause_count;
     reg [3:0]        ball_speed;
-    reg              up_p1;
-    reg              down_p1;
+    reg              faster_p1;
+    reg              slower_p1;
     reg [12:0]       rom_addr;
     wire [1:0]       rom_color;
     reg  [1:0]       rom_color_r;
@@ -164,17 +170,12 @@ module tt_um_pettit_galton
     reg              name_pix_r;
 
     // ---- Pinball-style nudge: left/right gamepad buttons ----------
-    // The user can "nudge" the next peg deflection by pressing left or
-    // right just as the ball reaches a peg.  An edge-detected press
-    // arms a brief window (~6 frames) during which the next
-    // deflect_trigger uses the user's choice instead of the random
-    // coin.  After any press, a longer lockout (~20 frames) ignores
-    // further presses, so holding or mashing the button is useless.
+    // The user can "nudge" the the top 2 decision points
     wire nudge_left  = stage < 4'h2 && gamepad_left;
     wire nudge_right = stage < 4'h2 && gamepad_right;
 
-    // Cumulative ball-drop counter, displayed top-right as 3 BCD digits
-    // (000..999, wraps).  Increments every time a ball lands in a bin,
+    // Cumulative ball-drop counter, displayed top-right as 4 BCD digits
+    // (0000..9999, wraps).  Increments every time a ball lands in a bin,
     // and is NOT cleared when the histogram is reset between cycles.
     reg [15:0]       drop_bcd;      // {hundreds, tens, units}
 
@@ -187,12 +188,14 @@ module tt_um_pettit_galton
     reg              last_dir;
     reg [3:0]        pitch_idx;
     reg              note_toggle;
+    reg              audio_ctrl_p1;
 
     // ---- Scaled histogram display (gamepad B toggle) ----------------
     reg              show_histogram;
     reg              b_p1;
 
-    // 14 histogram bins, 5 bits each (max 31)
+    // 14 histogram bins, up to 10 bits each (max 1023).  Outer bins
+    // have fewer bits (likely still too many)
     reg [6:0] hist0, hist1, hist11, hist12;
     reg [8:0] hist2, hist10;
     reg [9:0] hist3, hist4,  hist5,  hist6,
@@ -205,9 +208,9 @@ module tt_um_pettit_galton
     wire      hist_b5 = hist4[5] | hist5[5] | hist6[5] | hist7[5] | hist8[5];
     wire      hist_b4 = hist4[4] | hist5[4] | hist6[4] | hist7[4] | hist8[4];
 
-    // bin index from final slot: ball_x_pix - left_edge (96) / 32 (slot size)
+    // bin index from final slot: ball_x - left_edge (96) / 32 (slot size)
     wire [3:0] bin_idx;
-    assign ball_x_off = ball_x_pix - 96;
+    assign ball_x_off = ball_x - 96;
     assign bin_idx    = ball_x_off[8:5]-1;
 
     // current count for the bin the ball is heading into
@@ -242,21 +245,18 @@ module tt_um_pettit_galton
     // giving a 45° diagonal between pegs (ball_y moves 2 px/frame, columns
     // 16 px apart, peg rows 32 px apart → 16 frames per row, 16 px slide).
     reg  [9:0] target_x_pix;
-    wire at_target = (ball_x_pix[9:3] == target_x_pix[9:3]);
+    wire at_target = (ball_x[9:3] == target_x_pix[9:3]);
 
-    assign deflect_trigger = (phase == PH_FALL) && (stage < 4'd12)
-                           && at_target && (ball_y >= next_touch_y);
-    wire land_trigger    = (phase == PH_FALL) && (stage == 4'd12)
-                           && at_target && (ball_y >= landing_y);
+    assign deflect_trigger = (phase == PH_FALL) && (stage < 4'd12) && at_target && (ball_y >= next_touch_y);
+    wire land_trigger      = (phase == PH_FALL) && (stage == 4'd12) && at_target && (ball_y >= landing_y);
+    wire faster            = gamepad_up | ui_in[1];
+    wire slower            = gamepad_down | ui_in[2];
 
-    wire half_frame = (h_count == 399) && (v_count == 524) && (ball_speed > 4'd9);
-    wire quarter_frame = (h_count == 199 || h_count == 599) && (v_count == 524) && (ball_speed > 4'd10);
-    wire insane = (h_count[4:0] == 6'h0 && v_count == 524 && ball_speed > 4'd11);
     always @(posedge clk) begin
         if (!rst_n) begin
             phase         <= PH_FALL;
             ball_y        <= 0;
-            ball_x_pix    <= 320;
+            ball_x    <= 320;
             target_x_pix  <= 320;
             stage         <= 0;
             pause_count   <= 0;
@@ -266,37 +266,58 @@ module tt_um_pettit_galton
             hist12        <= 0;
             drop_bcd      <= 16'hfff0;
             ball_speed    <= 3'd6;
-            up_p1         <= 0;
-            down_p1       <= 0;
+            faster_p1     <= 0;
+            slower_p1     <= 0;
             last_dir      <= 1'b0;
             pitch_idx     <= 4'd0;
             note_toggle   <= 1'b0;
+            audio_off     <= 1'b0;
+            audio_ctrl_p1 <= 1'b0;
             show_histogram <= 1'b0;
             b_p1          <= 1'b0;
             scale_bits    <= 3'h0;
+            frame_end     <= 1'b0;
+            half_frame    <= 1'b0;
+            quarter_frame <= 1'b0;
+            insane        <= 1'b0;
         end else begin
+            // Register ROM output bits for better timing
             rom_color_r <= rom_color;
             name_pix_r  <= name_pix;
-            if (frame_end || half_frame || quarter_frame || insane) begin
-                // Histogram toggle on B button (edge detect)
-                b_p1 <= gamepad_b;
-                if (gamepad_b && !b_p1) begin
-                    show_histogram <= ~show_histogram;
-                    scale_bits <= hist_b9 ? 3'h0 : hist_b8 ? 3'h1 : hist_b7 ? 3'h2 :
-                                  hist_b6 ? 3'h3 : hist_b5 ? 3'h4 : hist_b4 ? 3'h5 : 3'h6;
-                end
 
-                if (!show_histogram) begin
-                up_p1 <= gamepad_up;
-                down_p1 <= gamepad_down;
+            // Register frame location detection for better timing
+            frame_end     <= (h_count == 799) && (v_count == 524);
+            half_frame    <= (h_count == 399) && (v_count == 524) && (ball_speed > 4'd9);
+            quarter_frame <= (h_count == 199 || h_count == 599) && (v_count == 524) && (ball_speed > 4'd10);
+            insane        <= (h_count[4:0] == 6'h0 && v_count == 524 && ball_speed > 4'd11);
+
+            // Histogram toggle on B button (edge detect)
+            b_p1 <= gamepad_b | ui_in[3];
+            if ((gamepad_b | ui_in[3]) && !b_p1) begin
+                show_histogram <= ~show_histogram;
+                scale_bits <= hist_b9 ? 3'h0 : hist_b8 ? 3'h1 : hist_b7 ? 3'h2 :
+                              hist_b6 ? 3'h3 : hist_b5 ? 3'h4 : hist_b4 ? 3'h5 : 3'h6;
+            end
+
+            // Audio on/off control
+            audio_ctrl_p1 <= gamepad_x | ui_in[7];
+            if ((gamepad_x | ui_in[7]) & !audio_ctrl_p1)
+               audio_off <= ~audio_off;
+
+            // Process ball drop based on speed and frame position
+            if ((frame_end || half_frame || quarter_frame || insane) && !show_histogram) begin
+                faster_p1 <= faster;
+                slower_p1 <= slower;
 
                 // Make the ball drop faster
-                if (gamepad_up && !up_p1 && ball_speed != 12)
+                if (faster && !faster_p1 && ball_speed != 12)
                     ball_speed <= ball_speed + 3'h1;
 
-                if (gamepad_down && !down_p1 && ball_speed != 2)
+                // Make the ball drop slower
+                if (slower && !slower_p1 && ball_speed != 2)
                     ball_speed <= ball_speed - 3'h1;
 
+                // Main FSM ... FALL, Short Pause, Long Pause
                 case (phase)
                 PH_FALL: begin
                     // Ball alternates between two motion modes:
@@ -305,25 +326,24 @@ module tt_um_pettit_galton
                     // This makes the peg "catch" the ball: descent stops while
                     // the ball slides off to its new column.
                     if (!at_target) begin
-                        if (ball_x_pix < target_x_pix)
-                            ball_x_pix <= ball_x_pix + (ball_speed > 4'd8 ? 10'sd8 : ball_speed > 4'd7 ? 10'sd4 : 10'sd2);
+                        if (ball_x < target_x_pix)
+                            ball_x <= ball_x + (ball_speed > 4'd8 ? 10'sd8 : ball_speed > 4'd7 ? 10'sd4 : 10'sd2);
                         else
-                            ball_x_pix <= ball_x_pix - (ball_speed > 4'd8 ? 10'sd8 : ball_speed > 4'd7 ? 10'sd4 : 10'sd2);
+                            ball_x <= ball_x - (ball_speed > 4'd8 ? 10'sd8 : ball_speed > 4'd7 ? 10'sd4 : 10'sd2);
                     end else if (deflect_trigger) begin
+                        // Ball is at a peg ... decide direction
                         ball_y <= next_touch_y;          // snap to contact y
                         stage  <= stage + 4'd1;
-                        // Pinball nudge: a fresh edge OR an armed press
-                        // overrides the random coin.  Either way, the
-                        // arm windows are consumed (lockout is already
-                        // running from the press itself).
+                        // Pinball nudge: Decide the direction of the first 2 pegs
                         if (nudge_left) begin
-                            target_x_pix <= ball_x_pix - 16;
+                            target_x_pix <= ball_x - 16;
                         end else if (nudge_right) begin
-                            target_x_pix <= ball_x_pix + 16;
+                            target_x_pix <= ball_x + 16;
                         end else begin
-                            target_x_pix <= coin ? ball_x_pix + 16
-                                                 : ball_x_pix - 16;
+                            target_x_pix <= coin ? ball_x + 16
+                                                 : ball_x - 16;
                         end
+
                         // ---- Audio "tink": pick direction, update pitch ----
                         // deflect_dir : 0=left, 1=right (matches coin).
                         // First peg of the ball (stage==0) always starts low.
@@ -341,6 +361,7 @@ module tt_um_pettit_galton
                             pitch_idx <= 4'd0;
                         end
                     end else if (land_trigger) begin
+                        // Ball has exited the peg field ... decide a bin
                         case (bin_idx)
                             4'd0:  hist0  <= next_hist[6:0];
                             4'd1:  hist1  <= next_hist[6:0];
@@ -360,7 +381,7 @@ module tt_um_pettit_galton
                         phase <= (cur_hist == 10'h3be) ? PH_PLONG : PH_PSHRT;
                         ball_y <= (cur_hist == 10'h3be) ? 0 : landing_y;             // snap to landing y
 
-                        // BCD increment with wrap at 999
+                        // Ball count ... BCD increment with wrap at 9999
                         if (drop_bcd[3:0] == 4'd9) begin
                             drop_bcd[3:0] <= 4'd0;
                             if (drop_bcd[7:4] == 4'd9) begin
@@ -384,16 +405,18 @@ module tt_um_pettit_galton
                         end else
                             drop_bcd[3:0] <= drop_bcd[3:0] + 4'd1;
                     end else begin
+                        // Free fall ... process unles held by gamepad_a or ui_in[0]
                         if ((!gamepad_a && !ui_in[0]) || ball_y > 25)
                           ball_y <= ball_y + {6'h0, ball_speed > 4'd7 ? 4'd8 : ball_speed};        // free fall
                     end
                 end
                 
                 PH_PSHRT: begin
+                    // Short Pause
                     pause_count <= pause_count + 2'd1;
                     if (pause_count == 2'd3 || ball_speed > 4'd9) begin
                         ball_y       <= 5;
-                        ball_x_pix   <= 320;
+                        ball_x   <= 320;
                         target_x_pix <= 320;
                         stage        <= 0;
                         phase        <= PH_FALL;
@@ -401,10 +424,14 @@ module tt_um_pettit_galton
                 end
                 
                 PH_PLONG: begin
+                    // Long pause after board fills.  If gamepad is present,
+                    // waits for START button to be pressed.  Reuses ball_y
+                    // register as the timer to save space since no ball
+                    // activity anyway.
                     if (ball_y >= 10'd180) begin
                         if (!gamepad_is_present || gamepad_start) begin
                             ball_y       <= 0;
-                            ball_x_pix   <= 320;
+                            ball_x   <= 320;
                             target_x_pix <= 320;
                             stage        <= 0;
                             drop_bcd     <= 16'hfff0;
@@ -421,9 +448,9 @@ module tt_um_pettit_galton
                 
                 default: phase <= PH_FALL;
                 endcase
-                end // if (!show_histogram)
             end
             else if (v_count < 133) begin
+                // Register the ROM address
                 if (h_count < 90)
                     rom_addr <= rom_addr + 1;
                 else if (v_count == 93)
@@ -445,7 +472,9 @@ module tt_um_pettit_galton
                       && (v_count < 10'd480);
     wire bin_floor  = in_pf && (v_count == 10'd476);
 
-    // ----------- Peg Hit Test --------------------------------------
+    // ===============================================================
+    // Peg Hit Test 
+    // ===============================================================
     // Peg lattice: row r at y = 40 + r*32; pegs at slot ∈ {-r,…,r}
     // step 2, x = 320 + slot*16. Even rows have pegs on x≡0 (mod 32
     // relative to centre); odd rows on x≡16.
@@ -477,26 +506,20 @@ module tt_um_pettit_galton
                                                   : peg_slot;
     wire peg_in_range = (peg_slot_abs <= {2'd0, nr});
 
-    // Filled circle, radius 3 (dx²+dy² ≤ 9)
-    wire is_peg = in_pf && pfy_valid && nr_valid && peg_in_range
-               && ((dx_abs_p + dy_abs_p) <= 6'd2);
+    // Filled circle, radius 2 ...  no squares, just approx since so small
+    wire is_peg = in_pf && pfy_valid && nr_valid && peg_in_range &&
+                  ((dx_abs_p + dy_abs_p) <= 6'd2);
 
-    // ----------- Active Ball Rendering -----------------------------
-    // Ball x = 320 + ball_x_pix  (pixel-accurate, slides between pegs)
-    //wire signed [10:0] ball_x_s = 11'sd320 + {ball_x_pix[9], ball_x_pix};
-    wire signed [10:0] ball_x_s = {1'b0, ball_x_pix};
-
+    // ===============================================================
+    // Active Ball Rendering
+    // ===============================================================
+    // Signed ball location for rendering
+    wire signed [10:0] ball_x_s = {1'b0, ball_x};
     wire signed [10:0] dxb = $signed({1'b0, h_count}) - ball_x_s;
     wire signed [10:0] dyb = $signed({1'b0, v_count}) - $signed({1'b0, ball_y});
     wire        [10:0] dxb_abs = dxb[10] ? (~dxb + 11'sd1) : dxb;
     wire        [10:0] dyb_abs = dyb[10] ? (~dyb + 11'sd1) : dyb;
-
-    // Clip to small to avoid huge multipliers
-    wire [4:0] dxb_s = (dxb_abs > 11'd10) ? 5'd10 : dxb_abs[4:0];
-    wire [4:0] dyb_s = (dyb_abs > 11'd10) ? 5'd10 : dyb_abs[4:0];
-    wire [9:0] ball_dist_sq = dxb_s*dxb_s + dyb_s*dyb_s;
-
-    wire ball_visible = (phase == PH_FALL);
+    wire               ball_visible = (phase == PH_FALL);
 
     // 10x10 ball bitmap (replaces multipliers/adder/compare):
     //         0001111000
@@ -528,7 +551,9 @@ module tt_um_pettit_galton
                    || ((ball_my == 4'd4) && (ball_mx <= 4'd1));
     wire is_ball = ball_visible && in_pf && ball_in_bbox && ball_shape;
 
-    // ----------- Histogram Bars ------------------------------------
+    // ===============================================================
+    // Bottom bin Histogram Bars
+    // ===============================================================
     wire [9:0] hbin_off = h_count - 10'd80;             // 0..447
     wire [3:0] hbin     = hbin_off[8:5];                // 0..13
     wire [4:0] hbin_x   = hbin_off[4:0];                // 0..31
@@ -564,22 +589,25 @@ module tt_um_pettit_galton
     // Faint vertical bin separators below the peg field
     wire bin_sep = in_pf && (v_count >= 10'd410) && (v_count < 10'd476) && (hbin_x == 5'd0);
 
-    // ----------- Scaled Histogram Bars (gamepad B mode) ----------------
-    // Bars occupy 360 pixels (y=116..475), scaled so the tallest bin
-    // fills the full height.  Comparison avoids division:
-    //   draw bar if  (476 - v_count) * max_bin  <=  hist_for_bin * 360
+    // ===============================================================
+    // Scaled Histogram Bars (gamepad B mode)
+    // ===============================================================
+    // Bars occupy up to 360 pixels (y=116..475), scaled based on the 
+    // tallest bin.
     localparam [9:0] HIST_TOP = 10'd116;
     wire [9:0] y_dist       = 10'd476 - v_count;
     wire       in_hist_y    = (v_count >= HIST_TOP) && (v_count < 10'd476);
     wire [9:0] scale_hist   = hist_for_bin << scale_bits;
     wire [9:0] scale_sum    = {2'h0, scale_hist[9:2]} + {3'h0, scale_hist[9:3]};
     wire in_scaled_bar      = in_hist_y && (v_count > 10'd476 - scale_sum);
+
     // Non-zero bins that scale to zero still get a 1-pixel line
     wire in_min_bar         = (hist_for_bin != 10'd0) && (v_count == 10'd475);
-    wire is_hist_bar        = show_histogram && in_pf && in_bar_x
-                            && (in_scaled_bar || in_min_bar);
+    wire is_hist_bar        = show_histogram && in_pf && in_bar_x && (in_scaled_bar || in_min_bar);
 
-    // ----------- Ball-Drop Counter (4 BCD digits, top-right) -------
+    // ===============================================================
+    // Ball-Drop Counter (4 BCD digits, top-right)
+    // ===============================================================
     // 3x5 block font scaled 4x: each digit cell is 12x20 px, with a
     // 4 px gap between digits.  Total width = 4*16 - 4 = 60 px.
     // Placed at h_count 580..639, v_count 8..27.
@@ -606,7 +634,9 @@ module tt_um_pettit_galton
         endcase
     end
 
+    // ===============================================================
     // 3x5 block font, packed row-major: bit[14]=top-left .. bit[0]=bot-right
+    // ===============================================================
     reg [14:0] glyph;
     always @(*) begin
         case (cur_digit)
@@ -635,7 +665,6 @@ module tt_um_pettit_galton
     wire       glyph_pixel = glyph[bit_idx];
     wire       is_count    = in_cnt_box && in_cell && glyph_pixel;
 
-
     // =======================================================================
     // Display fill level in full bars
     // =======================================================================
@@ -661,7 +690,9 @@ module tt_um_pettit_galton
                          ? (in_pf && (v_count >= HIST_TOP) && (v_count < 10'd476) && (hbin_x == 5'd0))
                          : bin_sep;
 
-    // ----------- Side Banners: "TINY" left, "GALTON" right ---------
+    // =======================================================================
+    // Side Banners: "TINY" left, "GALTON" right
+    // =======================================================================
     // Same 3x5 block font scaled 4x as the BCD counter.  Both banners
     // sit inside the playfield, above peg row 0 (which starts at y=40).
     //   TINY   : 4 letters → 4*16-4 = 60 px wide @ h=100..159
@@ -741,7 +772,7 @@ module tt_um_pettit_galton
     );
 
     // ===============================================================
-    // Instantiate the Galton bitmap
+    // Instantiate the "Sir Francis Galton" bitmap
     // ===============================================================
     name_rom rom2
     (
@@ -788,8 +819,6 @@ module tt_um_pettit_galton
         .pwm_out     ( pwm_out     )
     );
 
-
-    wire _unused = &{ena, ui_in, uio_in, 1'b0};
-
+    wire _unused = &{ena, uio_in, 1'b0};
 
 endmodule
