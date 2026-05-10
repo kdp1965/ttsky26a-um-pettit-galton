@@ -65,8 +65,8 @@ module tt_um_pettit_galton
     wire video_active = (h_count < 640) && (v_count < 480);
     wire hsync = ~(h_count >= 656 && h_count < 752);
     wire vsync = ~(v_count >= 490 && v_count < 492);
-    wire is_bitmap = h_count > 0 && h_count < 91 && v_count > 0 && v_count < 92;
-    wire is_namemap = h_count > 0 && h_count < 91 && v_count > 93 && v_count < 133;
+    wire is_bitmap = h_count > 0 && h_count < 91 && v_count > 0 && v_count < 80;
+    wire is_namemap = h_count > 0 && h_count < 91 && v_count > 81 && v_count < 121;
     wire half_frame;
     wire quarter_frame;
     wire insane;
@@ -449,7 +449,7 @@ module tt_um_pettit_galton
                 // Register the ROM address
                 if (h_count < 90)
                     rom_addr <= rom_addr + 1;
-                else if (v_count == 93)
+                else if (v_count == 81)
                     rom_addr <= 0;
             end else
                 rom_addr <= 0;
