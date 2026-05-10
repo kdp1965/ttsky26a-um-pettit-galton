@@ -8,7 +8,7 @@
 //  distribution. After 16 balls have landed the histogram is
 //  briefly displayed, then cleared, and the cycle repeats.
 //
-//  Target: 2-tile TinyTapeout (1x2). VGA timing is 640x480@60Hz
+//  Target: 4-tile TinyTapeout (2x2). VGA timing is 640x480@60Hz
 //  on the standard TinyVGA PMOD pinout.
 //
 //  Geometry (all in screen pixels):
@@ -65,7 +65,7 @@ module tt_um_pettit_galton
     wire video_active = (h_count < 640) && (v_count < 480);
     wire hsync = ~(h_count >= 656 && h_count < 752);
     wire vsync = ~(v_count >= 490 && v_count < 492);
-    wire is_bitmap = h_count > 0 && h_count < 65 && v_count > 0 && v_count < 80;
+    wire is_bitmap = h_count > 0 && h_count < 91 && v_count > 0 && v_count < 92;
 
     assign uo_out[7] = hsync;
     assign uo_out[6] = B[0];
@@ -88,21 +88,20 @@ module tt_um_pettit_galton
     // ===============================================================
     // Instantiate the gampad controller
     // ===============================================================
-    wire gamepad_is_present = 1'b0;
-    wire gamepad_b = 1'b0;
-    wire gamepad_y = 1'b0;
-    wire gamepad_select = 1'b0;
-    wire gamepad_start = 1'b0;
-    wire gamepad_up = 1'b0;
-    wire gamepad_down = 1'b0;
-    wire gamepad_left = 1'b0;
-    wire gamepad_right = 1'b0;
-    wire gamepad_a = 1'b0;
-    wire gamepad_x = 1'b0;
-    wire gamepad_l = 1'b0;
-    wire gamepad_r = 1'b0;
+    wire gamepad_is_present;
+    wire gamepad_b;
+    wire gamepad_y;
+    wire gamepad_select;
+    wire gamepad_start;
+    wire gamepad_up;
+    wire gamepad_down;
+    wire gamepad_left;
+    wire gamepad_right;
+    wire gamepad_a;
+    wire gamepad_x;
+    wire gamepad_l;
+    wire gamepad_r;
 
-    /*
     gamepad_pmod_single gamepad
     (
         // Inputs:
@@ -127,37 +126,23 @@ module tt_um_pettit_galton
         .l          ( gamepad_l          ),
         .r          ( gamepad_r          )
     );
-    */
 
     // ===============================================================
-    //  Four coprime LFSRs whose outputs are XOR-mixed.
+    //  Three coprime LFSRs whose outputs are XOR-mixed.
     // ===============================================================
-    reg [16:0] lfsr;
-    reg [10:0] lfsr2;
-    reg [22:0] lfsr3;
-//    wire lfsr_fb = lfsr[16] ^ lfsr[13];
-    wire lfsr2_fb = lfsr2[10] ^ lfsr2[8];
-    wire lfsr3_fb = lfsr3[22] ^ lfsr3[17];
-    always @(posedge clk) begin
-        if (!rst_n) begin
-//            lfsr <= 17'h12000;
-            lfsr2 <= 11'h500;
-            lfsr3 <= 23'h420000;
-        end else begin
-            if (deflect_trigger | ui_in[0] | gamepad_a | gamepad_left | gamepad_right)
-            begin
-//              lfsr  <= {lfsr[15:0],  lfsr_fb};
-              lfsr2  <= {lfsr2[9:0],  lfsr2_fb};
-              lfsr3  <= {lfsr3[21:0],  lfsr3_fb};
-            end
-        end
-    end
-//    wire coin = lfsr[0] ^ lfsr2[0] ^ lfsr3[0];
-    wire coin = lfsr2[0] ^ lfsr3[0];
+    wire    coin;
+    wire    flip = deflect_trigger | ui_in[0] | gamepad_a | gamepad_left | gamepad_right;
+    coin_flip coin_flip_i
+    (
+        .clk   ( clk   ),
+        .rst_n ( rst_n ),
+        .flip  ( flip  ),
+        .coin  ( coin  )
+    );
 
-    // ---------------------------------------------------------------
+    // ===============================================================
     //  Game State Machine
-    // ---------------------------------------------------------------
+    // ===============================================================
     localparam [1:0] PH_FALL  = 2'd0;
     localparam [1:0] PH_PSHRT = 2'd1;
     localparam [1:0] PH_PLONG = 2'd2;
@@ -168,14 +153,12 @@ module tt_um_pettit_galton
     wire [9:0]       ball_x_off;
     reg [3:0]        stage;         // 0..13 pegs hit
     reg [1:0]        pause_count;
-    reg [2:0]        ball_speed;
+    reg [3:0]        ball_speed;
     reg              up_p1;
     reg              down_p1;
-    wire [12:0]      rom_addr;
+    reg [12:0]       rom_addr;
     wire [1:0]       rom_color;
     reg  [1:0]       rom_color_r;
-
-    assign rom_addr = {v_count[6:0], h_count[5:0]};
 
     // ---- Pinball-style nudge: left/right gamepad buttons ----------
     // The user can "nudge" the next peg deflection by pressing left or
@@ -190,7 +173,7 @@ module tt_um_pettit_galton
     // Cumulative ball-drop counter, displayed top-right as 3 BCD digits
     // (000..999, wraps).  Increments every time a ball lands in a bin,
     // and is NOT cleared when the histogram is reset between cycles.
-    reg [11:0]       drop_bcd;      // {hundreds, tens, units}
+    reg [15:0]       drop_bcd;      // {hundreds, tens, units}
 
     // ---- Audio "tink" state -----------------------------------------
     //   - last_dir : direction of previous deflection (0=L, 1=R)
@@ -203,9 +186,9 @@ module tt_um_pettit_galton
     reg              note_toggle;
 
     // 14 histogram bins, 5 bits each (max 31)
-    reg [2:0] hist0, hist1, hist11, hist12;
-    reg [3:0] hist2, hist10;
-    reg [5:0] hist3, hist4,  hist5,  hist6,
+    reg [6:0] hist0, hist1, hist11, hist12;
+    reg [8:0] hist2, hist10;
+    reg [9:0] hist3, hist4,  hist5,  hist6,
               hist7, hist8,  hist9;
 
     // bin index from final slot: ball_x_pix - left_edge (96) / 32 (slot size)
@@ -214,8 +197,8 @@ module tt_um_pettit_galton
     assign bin_idx    = ball_x_off[8:5]-1;
 
     // current count for the bin the ball is heading into
-    reg [5:0] cur_hist;
-    wire [5:0] next_hist = cur_hist == 6'd63 ? 6'd63 : cur_hist + 1;
+    reg [9:0] cur_hist;
+    wire [9:0] next_hist = cur_hist == 10'h3ff ? 10'h3ff : cur_hist + 1;
     always @(*) begin
         case (bin_idx)
             4'd0:  cur_hist = {3'h0, hist0};
@@ -235,7 +218,7 @@ module tt_um_pettit_galton
     end
 
     // Landing y = 472 - 2*cur_hist  (ball center sits on bar top)
-    wire [9:0] landing_y = 10'd472 - {4'd0, cur_hist};
+    wire [9:0] landing_y = 10'd472 - {4'd0, (|cur_hist[9:6] ? 10'd64 : cur_hist)};
 
     // Y at which the ball first "touches" the peg in row `stage` from above.
     // Ball radius 8 + peg radius 3 = 11 px between centres at contact.
@@ -254,6 +237,9 @@ module tt_um_pettit_galton
     //wire signed [9:0] target_x_pix = {{5{slot[4]}}, slot} <<< 4;
     reg  [9:0] target_x_pix;
  
+    wire half_frame = (h_count == 399) && (v_count == 524) && (ball_speed > 4'd9);
+    wire quarter_frame = (h_count == 199 || h_count == 599) && (v_count == 524) && (ball_speed > 4'd10);
+    wire insane = (h_count[4:0] == 6'h0 && v_count == 524 && ball_speed > 4'd11);
     always @(posedge clk) begin
         if (!rst_n) begin
             phase         <= PH_FALL;
@@ -266,7 +252,7 @@ module tt_um_pettit_galton
             hist4         <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
             hist8         <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
             hist12        <= 0;
-            drop_bcd      <= 12'hff0;
+            drop_bcd      <= 16'hfff0;
             ball_speed    <= 3'd6;
             up_p1         <= 0;
             down_p1       <= 0;
@@ -275,12 +261,12 @@ module tt_um_pettit_galton
             note_toggle   <= 1'b0;
         end else begin
             rom_color_r <= rom_color;
-            if (frame_end) begin
+            if (frame_end || half_frame || quarter_frame || insane) begin
                 up_p1 <= gamepad_up;
                 down_p1 <= gamepad_down;
 
                 // Make the ball drop faster
-                if (gamepad_up && !up_p1 && ball_speed != 7)
+                if (gamepad_up && !up_p1 && ball_speed != 12)
                     ball_speed <= ball_speed + 3'h1;
 
                 if (gamepad_down && !down_p1 && ball_speed != 2)
@@ -295,9 +281,9 @@ module tt_um_pettit_galton
                     // the ball slides off to its new column.
                     if (!at_target) begin
                         if (ball_x_pix < target_x_pix)
-                            ball_x_pix <= ball_x_pix + 10'sd2;
+                            ball_x_pix <= ball_x_pix + (ball_speed > 4'd8 ? 10'sd8 : ball_speed > 4'd7 ? 10'sd4 : 10'sd2);
                         else
-                            ball_x_pix <= ball_x_pix - 10'sd2;
+                            ball_x_pix <= ball_x_pix - (ball_speed > 4'd8 ? 10'sd8 : ball_speed > 4'd7 ? 10'sd4 : 10'sd2);
                     end else if (deflect_trigger) begin
                         ball_y <= next_touch_y;          // snap to contact y
                         stage  <= stage + 4'd1;
@@ -331,9 +317,9 @@ module tt_um_pettit_galton
                         end
                     end else if (land_trigger) begin
                         case (bin_idx)
-                            4'd0:  hist0  <= next_hist[2:0];
-                            4'd1:  hist1  <= next_hist[2:0];
-                            4'd2:  hist2  <= next_hist[3:0];
+                            4'd0:  hist0  <= next_hist[6:0];
+                            4'd1:  hist1  <= next_hist[6:0];
+                            4'd2:  hist2  <= next_hist[7:0];
                             4'd3:  hist3  <= next_hist;
                             4'd4:  hist4  <= next_hist;
                             4'd5:  hist5  <= next_hist;
@@ -341,22 +327,28 @@ module tt_um_pettit_galton
                             4'd7:  hist7  <= next_hist;
                             4'd8:  hist8  <= next_hist;
                             4'd9:  hist9  <= next_hist;
-                            4'd10: hist10 <= next_hist[3:0];
-                            4'd11: hist11 <= next_hist[2:0];
-                            default: hist12 <= next_hist[2:0];
+                            4'd10: hist10 <= next_hist[7:0];
+                            4'd11: hist11 <= next_hist[6:0];
+                            default: hist12 <= next_hist[6:0];
                         endcase
                         pause_count <= 0;
-                        phase <= (cur_hist == 6'd63) ? PH_PLONG : PH_PSHRT;
-                        ball_y <= (cur_hist == 6'h63) ? 0 : landing_y;             // snap to landing y
+                        phase <= (cur_hist == 10'h3be) ? PH_PLONG : PH_PSHRT;
+                        ball_y <= (cur_hist == 10'h3be) ? 0 : landing_y;             // snap to landing y
 
                         // BCD increment with wrap at 999
                         if (drop_bcd[3:0] == 4'd9) begin
                             drop_bcd[3:0] <= 4'd0;
                             if (drop_bcd[7:4] == 4'd9) begin
                                 drop_bcd[7:4] <= 4'd0;
-                                if (drop_bcd[11:8] == 4'd9)
+                                if (drop_bcd[11:8] == 4'd9) begin
                                     drop_bcd[11:8] <= 4'd0;
-                                else if (drop_bcd[11:8] == 4'd15)
+                                    if (drop_bcd[15:12] == 4'd9)
+                                        drop_bcd[15:12] <= 4'd0;
+                                    else if (drop_bcd[15:12] == 4'd15)
+                                        drop_bcd[15:12] <= 4'd1;
+                                    else
+                                        drop_bcd[15:12] <= drop_bcd[15:12] + 4'd1;
+                                end else if (drop_bcd[11:8] == 4'd15)
                                     drop_bcd[11:8] <= 4'd1;
                                 else
                                     drop_bcd[11:8] <= drop_bcd[11:8] + 4'd1;
@@ -368,13 +360,13 @@ module tt_um_pettit_galton
                             drop_bcd[3:0] <= drop_bcd[3:0] + 4'd1;
                     end else begin
                         if ((!gamepad_a && !ui_in[0]) || ball_y > 25)
-                          ball_y <= ball_y + {7'h0, ball_speed};        // free fall
+                          ball_y <= ball_y + {6'h0, ball_speed > 4'd7 ? 4'd8 : ball_speed};        // free fall
                     end
                 end
                 
                 PH_PSHRT: begin
                     pause_count <= pause_count + 2'd1;
-                    if (pause_count == 2'd3) begin
+                    if (pause_count == 2'd3 || ball_speed > 4'd9) begin
                         ball_y       <= 5;
                         ball_x_pix   <= 320;
                         target_x_pix <= 320;
@@ -384,24 +376,32 @@ module tt_um_pettit_galton
                 end
                 
                 PH_PLONG: begin
-                    ball_y <= ball_y + 10'd1;
                     if (ball_y >= 10'd180) begin
-                        ball_y       <= 0;
-                        ball_x_pix   <= 320;
-                        target_x_pix <= 320;
-                        stage        <= 0;
-                        drop_bcd     <= 12'hff0;
-                        hist0        <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
-                        hist4        <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
-                        hist8        <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
-                        hist12       <= 0;
-                        phase        <= PH_FALL;
+                        if (!gamepad_is_present || gamepad_start) begin
+                            ball_y       <= 0;
+                            ball_x_pix   <= 320;
+                            target_x_pix <= 320;
+                            stage        <= 0;
+                            drop_bcd     <= 16'hfff0;
+                            hist0        <= 0; hist1  <= 0; hist2  <= 0; hist3  <= 0;
+                            hist4        <= 0; hist5  <= 0; hist6  <= 0; hist7  <= 0;
+                            hist8        <= 0; hist9  <= 0; hist10 <= 0; hist11 <= 0;
+                            hist12       <= 0;
+                            phase        <= PH_FALL;
+                        end
                     end
+                    else
+                        ball_y <= ball_y + 10'd1;
                 end
                 
                 default: phase <= PH_FALL;
                 endcase
             end
+            else if (v_count < 92) begin
+                if (h_count < 90)
+                    rom_addr <= rom_addr + 1;
+            end else
+            rom_addr <= 0;
         end
     end
 
@@ -505,7 +505,7 @@ module tt_um_pettit_galton
     wire [3:0] hbin     = hbin_off[8:5];                // 0..13
     wire [4:0] hbin_x   = hbin_off[4:0];                // 0..31
 
-    reg [5:0] hist_for_bin;
+    reg [9:0] hist_for_bin;
     always @(*) begin
         case (hbin)
             4'd1:  hist_for_bin = {3'h0, hist0};
@@ -525,29 +525,28 @@ module tt_um_pettit_galton
         endcase
     end
 
-    wire [9:0] bar_top   = 10'd476 - {4'd0, hist_for_bin};
+    wire [9:0] full_top  = 10'd476 - {4'd0, (|hist_for_bin[9:6] ? 6'd63 : hist_for_bin[5:0])};
+    wire [9:0] bar_top   = 10'd476 - {4'd0, hist_for_bin[5:0]};
     wire       in_bar_y  = (v_count >= bar_top) && (v_count < 10'd476);
+    wire       in_full_y = (v_count >= full_top) && (v_count < 10'd476);
     wire       in_bar_x  = (hbin_x >= 5'd3) && (hbin_x < 5'd29);
-    wire       is_bar    = in_pf && in_bar_y && in_bar_x
-                        && (hist_for_bin != 6'd0);
-    wire       is_full    = in_pf && in_bar_y && in_bar_x
-                        && (hist_for_bin == 6'd63);
+    wire       is_bar    = in_pf && in_bar_y && in_bar_x && (hist_for_bin != 10'd0);
+    wire       is_full   = in_pf && in_full_y && in_bar_x && (|hist_for_bin[9:6]);
 
     // Faint vertical bin separators below the peg field
-    wire bin_sep = in_pf && (v_count >= 10'd410) && (v_count < 10'd476)
-                && (hbin_x == 5'd0);
+    wire bin_sep = in_pf && (v_count >= 10'd410) && (v_count < 10'd476) && (hbin_x == 5'd0);
 
-    // ----------- Ball-Drop Counter (3 BCD digits, top-right) -------
+    // ----------- Ball-Drop Counter (4 BCD digits, top-right) -------
     // 3x5 block font scaled 4x: each digit cell is 12x20 px, with a
-    // 4 px gap between digits.  Total width = 3*16 - 4 = 44 px.
-    // Placed at h_count 580..623, v_count 8..27.
+    // 4 px gap between digits.  Total width = 4*16 - 4 = 60 px.
+    // Placed at h_count 580..639, v_count 8..27.
     localparam [9:0] CNT_X0 = 10'd580;
     localparam [9:0] CNT_Y0 = 10'd8;
-    wire in_cnt_box = (h_count >= CNT_X0) && (h_count < CNT_X0 + 10'd48)
+    wire in_cnt_box = (h_count >= CNT_X0) && (h_count < CNT_X0 + 10'd60)
                    && (v_count >= CNT_Y0) && (v_count < CNT_Y0 + 10'd20);
-    wire [9:0] cnt_h     = h_count - CNT_X0;       // 0..47
+    wire [9:0] cnt_h     = h_count - CNT_X0;       // 0..59
     wire [9:0] cnt_v     = v_count - CNT_Y0;       // 0..19
-    wire [1:0] cnt_digit = cnt_h[5:4];             // 0..2 (h/16)
+    wire [2:0] cnt_digit = {is_full, cnt_h[5:4]};  // 0..3 (h/16)
     wire [3:0] cnt_h_in  = cnt_h[3:0];             // 0..15 within digit slot
     wire       in_cell   = (cnt_h_in < 4'd12);     // last 4 px = inter-digit gap
     wire [1:0] glyph_col = cnt_h_in[3:2];          // 0..2 (h/4 within cell)
@@ -556,9 +555,11 @@ module tt_um_pettit_galton
     reg [3:0] cur_digit;
     always @(*) begin
         case (cnt_digit)
-            2'd0:    cur_digit = drop_bcd[11:8];   // hundreds
-            2'd1:    cur_digit = drop_bcd[7:4];    // tens
-            default: cur_digit = drop_bcd[3:0];    // units
+            3'd0:    cur_digit = drop_bcd[15:12];  // thousands
+            3'd1:    cur_digit = drop_bcd[11:8];   // hundreds
+            3'd2:    cur_digit = drop_bcd[7:4];    // tens
+            3'd3:    cur_digit = drop_bcd[3:0];    // units
+            default: cur_digit = hist_for_bin[9:6];
         endcase
     end
 
@@ -576,6 +577,11 @@ module tt_um_pettit_galton
             4'd7:    glyph = 15'b111_001_010_010_010;
             4'd8:    glyph = 15'b111_101_111_101_111;
             4'd9:    glyph = 15'b111_101_111_001_111;
+            4'd10:   glyph = 15'b010_101_111_101_101;
+            4'd11:   glyph = 15'b110_101_110_101_110;
+            4'd12:   glyph = 15'b011_100_100_100_011;
+            4'd13:   glyph = 15'b110_101_101_101_110;
+            4'd14:   glyph = 15'b111_100_110_100_111;
             4'd15:   glyph = 15'b000_000_000_000_000;
             default: glyph = 15'b0;
         endcase
@@ -585,6 +591,22 @@ module tt_um_pettit_galton
     wire [3:0] bit_idx     = 4'd14 - glyph_row3 - {2'b0, glyph_col};
     wire       glyph_pixel = glyph[bit_idx];
     wire       is_count    = in_cnt_box && in_cell && glyph_pixel;
+
+
+    // =======================================================================
+    // Display fill level in full bars
+    // =======================================================================
+    wire [9:0] lcnt_h     = hbin_x-10;
+    wire [9:0] lcnt_v     = v_count - 456;
+    wire [3:0] lcnt_h_in  = lcnt_h[3:0];             // 0..15 within digit slot
+    wire       lin_cell   = hbin_x > 6 && hbin_x < 22 && (lcnt_h_in < 4'd12);     // last 4 px = inter-digit gap
+    wire [1:0] lglyph_col = lcnt_h_in[3:2];          // 0..2 (h/4 within cell)
+    wire [2:0] lglyph_row = lcnt_v[4:2];             // 0..4 (v/4)
+    wire [3:0] lglyph_row3 = {lglyph_row, 1'b0} + {1'b0, lglyph_row};  // row*3
+    wire [3:0] lbit_idx     = 4'd14 - lglyph_row3 - {2'b0, lglyph_col};
+    wire       lglyph_pixel = glyph[lbit_idx];
+    wire       in_level_y  = v_count >= 424 && v_count < 444;
+    wire       is_level    = is_full && lin_cell && lglyph_pixel && in_level_y;
 
     // ----------- Side Banners: "TINY" left, "GALTON" right ---------
     // Same 3x5 block font scaled 4x as the BCD counter.  Both banners
@@ -665,130 +687,43 @@ module tt_um_pettit_galton
         .out  ( rom_color )
     );
 
-
     // ===============================================================
     //  Color Composition
     // ===============================================================
-    always @(posedge clk) begin
-        if (!video_active) begin
-            R <= 2'd0; G <= 2'd0; B <= 2'd0;
-        end else if (is_bitmap) begin
-            R <= rom_color_r; G <= rom_color_r; B <= rom_color_r; // Bitmap data
-        end else if (side_rail || bin_floor) begin
-            R <= 2'd1; G <= 2'd1; B <= 2'd1;        // bright frame
-        end else if (is_count) begin
-            R <= 2'd3; G <= 2'd2; B <= 2'd2;        // white counter digits
-        end else if (is_text) begin
-            R <= 2'd3; G <= 2'd3; B <= 2'd0;        // yellow TINY / GALTON
-        end else if (is_ball) begin
-            R <= 2'd3; G <= 2'd3; B <= 2'd3;        // white ball
-        end else if (is_peg) begin
-            R <= 2'd2; G <= 2'd2; B <= 2'd3;        // light blue pegs
-        end else if (is_full) begin
-            R <= 2'd3; G <= 2'd3; B <= 2'd2;        // Yelow full bar
-        end else if (is_bar) begin
-            R <= 2'd2; G <= 2'd2; B <= 2'd2;        // gray bars
-        end else if (bin_sep) begin
-            R <= 2'd1; G <= 2'd1; B <= 2'd1;        // dim separator
-        end else begin
-            R <= 2'd0; G <= 2'd0; B <= 2'd0;
-        end
-    end
+    color_gen color_gen_i
+    (
+       .clk          ( clk          ),
+       .rst_n        ( rst_n        ),
+       .video_active ( video_active ),
+       .is_bitmap    ( is_bitmap    ),
+       .is_side_rail ( side_rail    ),
+       .is_bin_floor ( bin_floor    ),
+       .is_count     ( is_count     ),
+       .is_text      ( is_text      ),
+       .is_ball      ( is_ball      ),
+       .is_peg       ( is_peg       ),
+       .is_full      ( is_full      ),
+       .is_bar       ( is_bar       ),
+       .is_bin_sep   ( bin_sep      ),
+       .is_level     ( is_level     ),
+       .bitmap_lvl   ( rom_color_r  ),
+       .R            ( R            ),
+       .G            ( G            ),
+       .B            ( B            )
+    );
 
     // ===============================================================
-    //  Audio "tink" synthesis (PWM on uio[7])
+    //  Audio "tink" generator
     // ===============================================================
-    //  - Phase accumulator at 25.175 MHz, 24-bit.
-    //  - Phase increment  = 256 +_idx<<5)  →  ~382..1145 Hz
-    //  - 6-bit quarter-sine LUT, mirror-extended to a 64-step sine.
-    //  - Exponential envelope, retriggered to 0xFF on each peg hit
-    //    (note_toggle edge), then env -= (env>>6)+1 every 4096 clocks.
-    //  - 6-bit PWM at 25.175MHz/64 ≈ 393 kHz (above the PMOD's 200 kHz
-    //    recommendation), centred at 32 so silence is 50% duty cycle.
-    // ---------------------------------------------------------------
+    audio_gen audio_gen_i
+    (
+        .clk         ( clk         ),
+        .rst_n       ( rst_n       ),
+        .note_toggle ( note_toggle ),
+        .pitch_idx   ( pitch_idx   ),
+        .pwm_out     ( pwm_out     )
+    );
 
-    // Cross from frame-domain note_toggle to a 1-cycle pulse
-    reg note_toggle_d;
-    wire new_note_pulse = note_toggle ^ note_toggle_d;
-    always @(posedge clk) begin
-        if (!rst_n) note_toggle_d <= 1'b0;
-        else        note_toggle_d <= note_toggle;
-    end
-
-    // Phase accumulator
-    wire [9:0] phase_inc = 10'd256 + ({6'd0, pitch_idx} << 5);
-    reg [23:0] phase_acc;
-    always @(posedge clk) begin
-        if (!rst_n) phase_acc <= 24'd0;
-        else        phase_acc <= phase_acc + {14'd0, phase_inc};
-    end
-
-    // Sine: top 6 bits of phase index a 64-step sine
-    wire [1:0] quadrant = phase_acc[23:22];
-    wire [3:0] qphase   = phase_acc[21:18];
-    wire [3:0] sin_idx  = quadrant[0] ? (4'd15 - qphase) : qphase;
-
-    reg [4:0] sin_q;     // quarter-wave magnitude, 0..31
-    always @(*) begin
-        case (sin_idx)
-            4'd0:  sin_q = 5'd0;
-            4'd1:  sin_q = 5'd3;
-            4'd2:  sin_q = 5'd6;
-            4'd3:  sin_q = 5'd9;
-            4'd4:  sin_q = 5'd12;
-            4'd5:  sin_q = 5'd15;
-            4'd6:  sin_q = 5'd18;
-            4'd7:  sin_q = 5'd20;
-            4'd8:  sin_q = 5'd22;
-            4'd9:  sin_q = 5'd24;
-            4'd10: sin_q = 5'd26;
-            4'd11: sin_q = 5'd28;
-            4'd12: sin_q = 5'd29;
-            4'd13: sin_q = 5'd30;
-            4'd14: sin_q = 5'd31;
-            default: sin_q = 5'd31;
-        endcase
-    end
-    wire signed [6:0] sine = quadrant[1] ? -$signed({2'b00, sin_q})
-                                         :  $signed({2'b00, sin_q});
-
-    // Exponential envelope (retrigger on each peg hit)
-    reg [13:0] env_tick;
-    reg [7:0]  env;
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            env_tick <= 14'd0;
-            env      <= 8'd0;
-        end else if (new_note_pulse) begin
-            env      <= 8'hFF;
-            env_tick <= 14'd0;
-        end else begin
-            env_tick <= env_tick + 14'd1;
-            if (env_tick == 14'h3FFF && env != 8'd0)
-                env <= env - {6'd0, env[7:6]} - 8'd1;
-        end
-    end
-
-    // sine [-31..+31] * env [0..255] → [-7905..+7905] (signed 14b),
-    // shift right 8 → [-30..+30], add 32 → unsigned 6-bit PWM level.
-    wire signed [14:0] mod_s    = sine * $signed({1'b0, env});
-    wire signed [6:0]  sample_s = mod_s[14:8];
-    wire signed [7:0]  pwm_s    = $signed(8'd32) + {sample_s[6], sample_s};
-    wire [5:0] pwm_lvl = pwm_s[5:0];
-
-    // 6-bit PWM
-    reg [5:0] pwm_cnt;
-    reg       pwm_out_r;
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            pwm_cnt   <= 6'd0;
-            pwm_out_r <= 1'b0;
-        end else begin
-            pwm_cnt   <= pwm_cnt + 6'd1;
-            pwm_out_r <= (pwm_cnt < pwm_lvl);
-        end
-    end
-    assign pwm_out = pwm_out_r;
 
     wire _unused = &{ena, ui_in, uio_in, 1'b0};
 
