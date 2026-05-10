@@ -85,7 +85,7 @@ module tt_um_pettit_galton
     // All other uio bits are unused outputs.
     wire pwm_out;
     reg  audio_off;
-    assign uio_out = {pwm_out, 7'b0};
+    assign uio_out = {pwm_out & !audio_off, 7'b0};
     assign uio_oe  = 8'b1000_0000;
 
     wire deflect_trigger;
@@ -272,6 +272,8 @@ module tt_um_pettit_galton
             last_dir      <= 1'b0;
             pitch_idx     <= 4'd0;
             note_toggle   <= 1'b0;
+            audio_off     <= 1'b0;
+            audio_ctrl_p1 <= 1'b0;
             far_out_p1    <= 1'b0;
             far_out       <= 1'b0;
             show_histogram <= 1'b0;
@@ -299,6 +301,10 @@ module tt_um_pettit_galton
                 scale_bits <= hist_b9 ? 3'h0 : hist_b8 ? 3'h1 : hist_b7 ? 3'h2 :
                               hist_b6 ? 3'h3 : hist_b5 ? 3'h4 : hist_b4 ? 3'h5 : 3'h6;
             end
+
+            audio_ctrl_p1 <= gamepad_y;
+            if (gamepad_y & !audio_ctrl_p1)
+               audio_off <= ~audio_off;
 
             // Far Out (put ball in outer bin)
             far_out_p0 <= gamepad_x | ui_in[7];
