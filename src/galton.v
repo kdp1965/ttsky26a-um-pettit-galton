@@ -66,6 +66,7 @@ module tt_um_pettit_galton
     wire hsync = ~(h_count >= 656 && h_count < 752);
     wire vsync = ~(v_count >= 490 && v_count < 492);
     wire is_bitmap = h_count > 0 && h_count < 91 && v_count > 0 && v_count < 92;
+    wire is_namemap = h_count > 0 && h_count < 91 && v_count > 93 && v_count < 133;
 
     assign uo_out[7] = hsync;
     assign uo_out[6] = B[0];
@@ -159,6 +160,7 @@ module tt_um_pettit_galton
     reg [12:0]       rom_addr;
     wire [1:0]       rom_color;
     reg  [1:0]       rom_color_r;
+    wire             name_pix;
 
     // ---- Pinball-style nudge: left/right gamepad buttons ----------
     // The user can "nudge" the next peg deflection by pressing left or
@@ -184,6 +186,10 @@ module tt_um_pettit_galton
     reg              last_dir;
     reg [3:0]        pitch_idx;
     reg              note_toggle;
+
+    // ---- Scaled histogram display (gamepad B toggle) ----------------
+    reg              show_histogram;
+    reg              b_p1;
 
     // 14 histogram bins, 5 bits each (max 31)
     reg [6:0] hist0, hist1, hist11, hist12;
@@ -259,9 +265,17 @@ module tt_um_pettit_galton
             last_dir      <= 1'b0;
             pitch_idx     <= 4'd0;
             note_toggle   <= 1'b0;
+            show_histogram <= 1'b0;
+            b_p1          <= 1'b0;
         end else begin
             rom_color_r <= rom_color;
             if (frame_end || half_frame || quarter_frame || insane) begin
+                // Histogram toggle on B button (edge detect)
+                b_p1 <= gamepad_b;
+                if (gamepad_b && !b_p1)
+                    show_histogram <= ~show_histogram;
+
+                if (!show_histogram) begin
                 up_p1 <= gamepad_up;
                 down_p1 <= gamepad_down;
 
@@ -396,12 +410,56 @@ module tt_um_pettit_galton
                 
                 default: phase <= PH_FALL;
                 endcase
+                end // if (!show_histogram)
             end
-            else if (v_count < 92) begin
+            else if (v_count < 133) begin
                 if (h_count < 90)
                     rom_addr <= rom_addr + 1;
+                else if (v_count == 93)
+                    rom_addr <= 0;
             end else
-            rom_addr <= 0;
+                rom_addr <= 0;
+        end
+    end
+
+    // ===============================================================
+    //  Maximum bin value finder (runs during vblank each frame)
+    // ===============================================================
+    reg  [9:0] max_bin;
+    reg  [3:0] max_scan_idx;
+    reg  [9:0] scan_bin_val;
+
+    always @(*) begin
+        case (max_scan_idx)
+            4'd0:    scan_bin_val = {3'h0, hist0};
+            4'd1:    scan_bin_val = {3'h0, hist1};
+            4'd2:    scan_bin_val = {2'h0, hist2};
+            4'd3:    scan_bin_val = hist3;
+            4'd4:    scan_bin_val = hist4;
+            4'd5:    scan_bin_val = hist5;
+            4'd6:    scan_bin_val = hist6;
+            4'd7:    scan_bin_val = hist7;
+            4'd8:    scan_bin_val = hist8;
+            4'd9:    scan_bin_val = hist9;
+            4'd10:   scan_bin_val = {2'h0, hist10};
+            4'd11:   scan_bin_val = {3'h0, hist11};
+            default: scan_bin_val = {3'h0, hist12};
+        endcase
+    end
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            max_bin      <= 10'd1;
+            max_scan_idx <= 4'd15;
+        end else if (v_count == 10'd480 && h_count == 10'd0) begin
+            max_scan_idx <= 4'd0;
+            max_bin      <= 10'd0;
+        end else if (max_scan_idx <= 4'd12) begin
+            if (scan_bin_val > max_bin)
+                max_bin <= scan_bin_val;
+            max_scan_idx <= max_scan_idx + 4'd1;
+        end else if (max_bin == 10'd0) begin
+            max_bin <= 10'd1;
         end
     end
 
@@ -536,6 +594,21 @@ module tt_um_pettit_galton
     // Faint vertical bin separators below the peg field
     wire bin_sep = in_pf && (v_count >= 10'd410) && (v_count < 10'd476) && (hbin_x == 5'd0);
 
+    // ----------- Scaled Histogram Bars (gamepad B mode) ----------------
+    // Bars occupy 360 pixels (y=116..475), scaled so the tallest bin
+    // fills the full height.  Comparison avoids division:
+    //   draw bar if  (476 - v_count) * max_bin  <=  hist_for_bin * 360
+    localparam [9:0] HIST_TOP = 10'd116;
+    wire [9:0] y_dist       = 10'd476 - v_count;
+    wire       in_hist_y    = (v_count >= HIST_TOP) && (v_count < 10'd476);
+    wire [18:0] scale_lhs   = y_dist[8:0] * max_bin;
+    wire [18:0] scale_rhs   = hist_for_bin * 10'd360;
+    wire in_scaled_bar      = in_hist_y && (scale_lhs <= scale_rhs);
+    // Non-zero bins that scale to zero still get a 1-pixel line
+    wire in_min_bar         = (hist_for_bin != 10'd0) && (v_count == 10'd475);
+    wire is_hist_bar        = show_histogram && in_pf && in_bar_x
+                            && (in_scaled_bar || in_min_bar);
+
     // ----------- Ball-Drop Counter (4 BCD digits, top-right) -------
     // 3x5 block font scaled 4x: each digit cell is 12x20 px, with a
     // 4 px gap between digits.  Total width = 4*16 - 4 = 60 px.
@@ -607,6 +680,16 @@ module tt_um_pettit_galton
     wire       lglyph_pixel = glyph[lbit_idx];
     wire       in_level_y  = v_count >= 424 && v_count < 444;
     wire       is_level    = is_full && lin_cell && lglyph_pixel && in_level_y;
+
+    // Mux normal vs. histogram-mode signals for color_gen
+    wire final_is_bar    = show_histogram ? is_hist_bar : is_bar;
+    wire final_is_full   = show_histogram ? 1'b0 : is_full;
+    wire final_is_level  = show_histogram ? 1'b0 : is_level;
+    wire final_is_ball   = show_histogram ? 1'b0 : is_ball;
+    wire final_is_peg    = show_histogram ? 1'b0 : is_peg;
+    wire final_bin_sep   = show_histogram
+                         ? (in_pf && (v_count >= HIST_TOP) && (v_count < 10'd476) && (hbin_x == 5'd0))
+                         : bin_sep;
 
     // ----------- Side Banners: "TINY" left, "GALTON" right ---------
     // Same 3x5 block font scaled 4x as the BCD counter.  Both banners
@@ -688,6 +771,15 @@ module tt_um_pettit_galton
     );
 
     // ===============================================================
+    // Instantiate the Galton bitmap
+    // ===============================================================
+    name_rom rom2
+    (
+        .addr ( rom_addr[11:0] ),
+        .out  ( name_pix       )
+    );
+
+    // ===============================================================
     //  Color Composition
     // ===============================================================
     color_gen color_gen_i
@@ -696,17 +788,19 @@ module tt_um_pettit_galton
        .rst_n        ( rst_n        ),
        .video_active ( video_active ),
        .is_bitmap    ( is_bitmap    ),
+       .is_namemap   ( is_namemap   ),
        .is_side_rail ( side_rail    ),
        .is_bin_floor ( bin_floor    ),
        .is_count     ( is_count     ),
        .is_text      ( is_text      ),
-       .is_ball      ( is_ball      ),
-       .is_peg       ( is_peg       ),
-       .is_full      ( is_full      ),
-       .is_bar       ( is_bar       ),
-       .is_bin_sep   ( bin_sep      ),
-       .is_level     ( is_level     ),
+       .is_ball      ( final_is_ball ),
+       .is_peg       ( final_is_peg  ),
+       .is_full      ( final_is_full ),
+       .is_bar       ( final_is_bar  ),
+       .is_bin_sep   ( final_bin_sep ),
+       .is_level     ( final_is_level ),
        .bitmap_lvl   ( rom_color_r  ),
+       .name_pix     ( name_pix     ),
        .R            ( R            ),
        .G            ( G            ),
        .B            ( B            )

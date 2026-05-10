@@ -19,6 +19,7 @@ project:
   source_files:
     - "galton.v"
     - "galton_rom.v"
+    - "name_rom.v"
     - "gamepad_pmod.v"
     - "audio_gen.v"
     - "color_gen.v"
