@@ -161,6 +161,7 @@ module tt_um_pettit_galton
     wire [1:0]       rom_color;
     reg  [1:0]       rom_color_r;
     wire             name_pix;
+    reg              name_pix_r;
 
     // ---- Pinball-style nudge: left/right gamepad buttons ----------
     // The user can "nudge" the next peg deflection by pressing left or
@@ -196,6 +197,13 @@ module tt_um_pettit_galton
     reg [8:0] hist2, hist10;
     reg [9:0] hist3, hist4,  hist5,  hist6,
               hist7, hist8,  hist9;
+    reg [2:0] scale_bits;
+    wire      hist_b9 = hist4[9] | hist5[9] | hist6[9] | hist7[9] | hist8[9];
+    wire      hist_b8 = hist4[8] | hist5[8] | hist6[8] | hist7[8] | hist8[8];
+    wire      hist_b7 = hist4[7] | hist5[7] | hist6[7] | hist7[7] | hist8[7];
+    wire      hist_b6 = hist4[6] | hist5[6] | hist6[6] | hist7[6] | hist8[6];
+    wire      hist_b5 = hist4[5] | hist5[5] | hist6[5] | hist7[5] | hist8[5];
+    wire      hist_b4 = hist4[4] | hist5[4] | hist6[4] | hist7[4] | hist8[4];
 
     // bin index from final slot: ball_x_pix - left_edge (96) / 32 (slot size)
     wire [3:0] bin_idx;
@@ -230,6 +238,10 @@ module tt_um_pettit_galton
     // Ball radius 8 + peg radius 3 = 11 px between centres at contact.
     wire [9:0] next_touch_y = 10'd32 + ({6'd0, stage} << 5);   // 40 - 11 + stage*32
 
+    // Target x = slot * 16 (signed). Ball slides 1 px/frame toward target,
+    // giving a 45° diagonal between pegs (ball_y moves 2 px/frame, columns
+    // 16 px apart, peg rows 32 px apart → 16 frames per row, 16 px slide).
+    reg  [9:0] target_x_pix;
     wire at_target = (ball_x_pix[9:3] == target_x_pix[9:3]);
 
     assign deflect_trigger = (phase == PH_FALL) && (stage < 4'd12)
@@ -237,12 +249,6 @@ module tt_um_pettit_galton
     wire land_trigger    = (phase == PH_FALL) && (stage == 4'd12)
                            && at_target && (ball_y >= landing_y);
 
-    // Target x = slot * 16 (signed). Ball slides 1 px/frame toward target,
-    // giving a 45° diagonal between pegs (ball_y moves 2 px/frame, columns
-    // 16 px apart, peg rows 32 px apart → 16 frames per row, 16 px slide).
-    //wire signed [9:0] target_x_pix = {{5{slot[4]}}, slot} <<< 4;
-    reg  [9:0] target_x_pix;
- 
     wire half_frame = (h_count == 399) && (v_count == 524) && (ball_speed > 4'd9);
     wire quarter_frame = (h_count == 199 || h_count == 599) && (v_count == 524) && (ball_speed > 4'd10);
     wire insane = (h_count[4:0] == 6'h0 && v_count == 524 && ball_speed > 4'd11);
@@ -267,13 +273,18 @@ module tt_um_pettit_galton
             note_toggle   <= 1'b0;
             show_histogram <= 1'b0;
             b_p1          <= 1'b0;
+            scale_bits    <= 3'h0;
         end else begin
             rom_color_r <= rom_color;
+            name_pix_r  <= name_pix;
             if (frame_end || half_frame || quarter_frame || insane) begin
                 // Histogram toggle on B button (edge detect)
                 b_p1 <= gamepad_b;
-                if (gamepad_b && !b_p1)
+                if (gamepad_b && !b_p1) begin
                     show_histogram <= ~show_histogram;
+                    scale_bits <= hist_b9 ? 3'h0 : hist_b8 ? 3'h1 : hist_b7 ? 3'h2 :
+                                  hist_b6 ? 3'h3 : hist_b5 ? 3'h4 : hist_b4 ? 3'h5 : 3'h6;
+                end
 
                 if (!show_histogram) begin
                 up_p1 <= gamepad_up;
@@ -423,47 +434,6 @@ module tt_um_pettit_galton
     end
 
     // ===============================================================
-    //  Maximum bin value finder (runs during vblank each frame)
-    // ===============================================================
-    reg  [9:0] max_bin;
-    reg  [3:0] max_scan_idx;
-    reg  [9:0] scan_bin_val;
-
-    always @(*) begin
-        case (max_scan_idx)
-            4'd0:    scan_bin_val = {3'h0, hist0};
-            4'd1:    scan_bin_val = {3'h0, hist1};
-            4'd2:    scan_bin_val = {2'h0, hist2};
-            4'd3:    scan_bin_val = hist3;
-            4'd4:    scan_bin_val = hist4;
-            4'd5:    scan_bin_val = hist5;
-            4'd6:    scan_bin_val = hist6;
-            4'd7:    scan_bin_val = hist7;
-            4'd8:    scan_bin_val = hist8;
-            4'd9:    scan_bin_val = hist9;
-            4'd10:   scan_bin_val = {2'h0, hist10};
-            4'd11:   scan_bin_val = {3'h0, hist11};
-            default: scan_bin_val = {3'h0, hist12};
-        endcase
-    end
-
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            max_bin      <= 10'd1;
-            max_scan_idx <= 4'd15;
-        end else if (v_count == 10'd480 && h_count == 10'd0) begin
-            max_scan_idx <= 4'd0;
-            max_bin      <= 10'd0;
-        end else if (max_scan_idx <= 4'd12) begin
-            if (scan_bin_val > max_bin)
-                max_bin <= scan_bin_val;
-            max_scan_idx <= max_scan_idx + 4'd1;
-        end else if (max_bin == 10'd0) begin
-            max_bin <= 10'd1;
-        end
-    end
-
-    // ===============================================================
     //  Pixel Rendering  (combinational from h_count, v_count, state)
     // ===============================================================
 
@@ -601,9 +571,9 @@ module tt_um_pettit_galton
     localparam [9:0] HIST_TOP = 10'd116;
     wire [9:0] y_dist       = 10'd476 - v_count;
     wire       in_hist_y    = (v_count >= HIST_TOP) && (v_count < 10'd476);
-    wire [18:0] scale_lhs   = y_dist[8:0] * max_bin;
-    wire [18:0] scale_rhs   = hist_for_bin * 10'd360;
-    wire in_scaled_bar      = in_hist_y && (scale_lhs <= scale_rhs);
+    wire [9:0] scale_hist   = hist_for_bin << scale_bits;
+    wire [9:0] scale_sum    = {2'h0, scale_hist[9:2]} + {3'h0, scale_hist[9:3]};
+    wire in_scaled_bar      = in_hist_y && (v_count > 10'd476 - scale_sum);
     // Non-zero bins that scale to zero still get a 1-pixel line
     wire in_min_bar         = (hist_for_bin != 10'd0) && (v_count == 10'd475);
     wire is_hist_bar        = show_histogram && in_pf && in_bar_x
@@ -800,7 +770,7 @@ module tt_um_pettit_galton
        .is_bin_sep   ( final_bin_sep ),
        .is_level     ( final_is_level ),
        .bitmap_lvl   ( rom_color_r  ),
-       .name_pix     ( name_pix     ),
+       .name_pix     ( name_pix_r   ),
        .R            ( R            ),
        .G            ( G            ),
        .B            ( B            )
