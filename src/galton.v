@@ -67,10 +67,14 @@ module tt_um_pettit_galton
     wire vsync = ~(v_count >= 490 && v_count < 492);
     wire is_bitmap = h_count > 0 && h_count < 91 && v_count > 0 && v_count < 92;
     wire is_namemap = h_count > 0 && h_count < 91 && v_count > 93 && v_count < 133;
-    reg  half_frame;
-    reg  quarter_frame;
-    reg  insane;
-    reg  frame_end;
+    wire frame_end     = (h_count == 799) && (v_count == 524);
+    wire half_frame    = (h_count == 399) && (v_count == 524) && (ball_speed > 4'd9);
+    wire quarter_frame = (h_count == 199 || h_count == 599) && (v_count == 524) && (ball_speed > 4'd10);
+    wire insane        = (h_count[4:0] == 6'h0 && v_count == 524 && ball_speed > 4'd11);
+//    reg  half_frame;
+//    reg  quarter_frame;
+//    reg  insane;
+//    reg  frame_end;
 
     assign uo_out[7] = hsync;
     assign uo_out[6] = B[0];
@@ -278,20 +282,20 @@ module tt_um_pettit_galton
             show_histogram <= 1'b0;
             b_p1          <= 1'b0;
             scale_bits    <= 3'h0;
-            frame_end     <= 1'b0;
-            half_frame    <= 1'b0;
-            quarter_frame <= 1'b0;
-            insane        <= 1'b0;
+//            frame_end     <= 1'b0;
+//            half_frame    <= 1'b0;
+//            quarter_frame <= 1'b0;
+//            insane        <= 1'b0;
         end else begin
             // Register ROM output bits for better timing
             rom_color_r <= rom_color;
             name_pix_r  <= name_pix;
 
             // Register frame location detection for better timing
-            frame_end     <= (h_count == 799) && (v_count == 524);
-            half_frame    <= (h_count == 399) && (v_count == 524) && (ball_speed > 4'd9);
-            quarter_frame <= (h_count == 199 || h_count == 599) && (v_count == 524) && (ball_speed > 4'd10);
-            insane        <= (h_count[4:0] == 6'h0 && v_count == 524 && ball_speed > 4'd11);
+//            frame_end     <= (h_count == 799) && (v_count == 524);
+//            half_frame    <= (h_count == 399) && (v_count == 524) && (ball_speed > 4'd9);
+//            quarter_frame <= (h_count == 199 || h_count == 599) && (v_count == 524) && (ball_speed > 4'd10);
+//            insane        <= (h_count[4:0] == 6'h0 && v_count == 524 && ball_speed > 4'd11);
 
             // Histogram toggle on B button (edge detect)
             b_p1 <= gamepad_b | ui_in[3];
