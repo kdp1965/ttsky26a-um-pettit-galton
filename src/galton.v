@@ -88,7 +88,8 @@ module tt_um_pettit_galton
     // uio_out[7] is audio PWM (driven by the audio block at the bottom).
     // All other uio bits are unused outputs.
     wire pwm_out;
-    assign uio_out = {pwm_out, 7'b0};
+    reg  audio_off;
+    assign uio_out = {pwm_out & !audio_off, 7'b0};
     assign uio_oe  = 8'b1000_0000;
 
     wire deflect_trigger;
@@ -195,6 +196,7 @@ module tt_um_pettit_galton
     reg              last_dir;
     reg [3:0]        pitch_idx;
     reg              note_toggle;
+    reg              audio_ctrl_p1;
 
     // ---- Scaled histogram display (gamepad B toggle) ----------------
     reg              show_histogram;
@@ -282,6 +284,8 @@ module tt_um_pettit_galton
             show_histogram <= 1'b0;
             b_p1          <= 1'b0;
             scale_bits    <= 3'h0;
+            audio_off     <= 1'b0;
+            audio_ctrl_p1 <= 1'b0;
 //            frame_end     <= 1'b0;
 //            half_frame    <= 1'b0;
 //            quarter_frame <= 1'b0;
@@ -290,6 +294,10 @@ module tt_um_pettit_galton
             // Register ROM output bits for better timing
             rom_color_r <= rom_color;
             name_pix_r  <= name_pix;
+
+            audio_ctrl_p1 <= gamepad_y;
+            if (gamepad_y & !audio_ctrl_p1)
+               audio_off <= ~audio_off;
 
             // Register frame location detection for better timing
 //            frame_end     <= (h_count == 799) && (v_count == 524);
